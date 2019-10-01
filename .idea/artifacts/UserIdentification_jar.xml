@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="UserIdentification:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/UserIdentification_jar</output-path>
+    <root id="archive" name="UserIdentification.jar">
+      <element id="module-output" name="UserIdentification" />
+    </root>
+  </artifact>
+</component>

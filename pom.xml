@@ -10,7 +10,8 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <spark.version>2.1.1</spark.version>
+<!--        <spark.version>2.1.1</spark.version>-->
+        <spark.version>1.5.2</spark.version>
         <scala.version>2.10</scala.version>
         <hadoop.version>2.5.2</hadoop.version>
     </properties>
