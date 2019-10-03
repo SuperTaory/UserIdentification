@@ -86,7 +86,6 @@ object Verification {
 
     transformedRDD.saveAsTextFile(args(2))
     sc.stop()
-
   }
 
   def sigmoidFunction(v : Double, para1 : Double, para2 : Double) : Double = {
