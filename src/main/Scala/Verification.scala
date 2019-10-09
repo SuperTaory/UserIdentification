@@ -18,7 +18,7 @@ object Verification {
       val cnt = fields(3).toDouble
       val score = fields(4).dropRight(2).toDouble
       (TAID, TBID, station, cnt, score)
-    }).sortBy(_._5, ascending = false)
+    })
 
     val stationFile = sc.textFile(args(1))
     val stationRDD = stationFile.map(line => {
@@ -34,7 +34,7 @@ object Verification {
 
 
     // 转换为(TA.id, TB.id, list(TA.id, TB.id, station, cnt, score))
-    val groupedRDD = candidatesRDD.groupBy(x => (x._1, x._2)).mapValues(_.toList)
+    val groupedRDD = candidatesRDD.groupBy(x => (x._1, x._2)).mapValues(_.toList).filter(_._2.length == 3)
 
     // 转换为(TA.id, TB.id, SIG, WJS)
     val transformedRDD = groupedRDD.map(line => {

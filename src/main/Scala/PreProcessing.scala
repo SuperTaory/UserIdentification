@@ -148,7 +148,6 @@ object PreProcessing {
     // (福永,526212)
     // (塘朗,521382)
     // Increase the ranking score of TB.id by (rsz * o)
-    // 选择top-50为候选集合
     val CandidateSet = mergedStaCnt.map(line => {
       val station = line._2._2
       val rsz =  scoreInfo.value.toMap.get(station).get
