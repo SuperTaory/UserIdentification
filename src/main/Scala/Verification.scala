@@ -34,7 +34,7 @@ object Verification {
 
 
     // 转换为(TA.id, TB.id, list(TA.id, TB.id, station, cnt, score))
-    val groupedRDD = candidatesRDD.groupBy(x => (x._1, x._2)).mapValues(_.toList).filter(_._2.length == 3)
+    val groupedRDD = candidatesRDD.groupBy(x => (x._1, x._2)).mapValues(_.toList).filter(_._2.length >= 3)
 
     // 转换为(TA.id, TB.id, SIG, WJS)
     val transformedRDD = groupedRDD.map(line => {
