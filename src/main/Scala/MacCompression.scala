@@ -1,3 +1,5 @@
+import java.text.SimpleDateFormat
+
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SQLContext
 
@@ -49,9 +51,19 @@ object MacCompression {
         baseTime = line._2
         true
       }
+    }).map(line => {
+      val time = transTimeToString(line._2)
+      (line._1, time, line._3)
     })
 
     compressionRDD.saveAsTextFile(args(1))
     sc.stop()
+  }
+
+  def transTimeToString(time_tamp : String) : String = {
+    val pattern = "yyyy-MM-dd HH:mm:ss"
+    val dateFormat = new SimpleDateFormat(pattern)
+    val time = dateFormat.format(time_tamp.toLong * 1000)
+    time
   }
 }

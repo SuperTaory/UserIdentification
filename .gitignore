@@ -2,3 +2,5 @@
 /target/
 /result/
 /spark-warehouse
+/out/
+/.idea/
