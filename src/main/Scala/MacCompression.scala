@@ -1,4 +1,5 @@
 import java.text.SimpleDateFormat
+import java.util.TimeZone
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SQLContext
@@ -63,6 +64,7 @@ object MacCompression {
   def transTimeToString(time_tamp : String) : String = {
     val pattern = "yyyy-MM-dd HH:mm:ss"
     val dateFormat = new SimpleDateFormat(pattern)
+    dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"))
     val time = dateFormat.format(time_tamp.toLong * 1000)
     time
   }

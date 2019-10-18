@@ -1,6 +1,7 @@
 import java.text.SimpleDateFormat
-import scala.math.max
+import java.util.TimeZone
 
+import scala.math.max
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.sql.SQLContext
 
@@ -180,6 +181,7 @@ object testDemo {
   def transTimeFormat(timeString : String) : Long = {
     val pattern = "yyyy-MM-dd HH:mm:ss"
     val dateFormat = new SimpleDateFormat(pattern)
+    dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"))
     val time = dateFormat.parse(timeString).getTime / 1000
     time
   }
