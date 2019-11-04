@@ -7,9 +7,9 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.math.max
 
-object MatchMethod1 {
+object MatchPerMonth {
   def main(args: Array[String]): Unit = {
-    val conf = new SparkConf().setAppName("MatchMethod1")
+    val conf = new SparkConf().setAppName("MatchPerMonth")
     val sc = new SparkContext(conf)
 
     // 读取地铁站点名和编号映射关系
