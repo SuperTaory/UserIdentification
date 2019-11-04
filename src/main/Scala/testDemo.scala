@@ -73,9 +73,9 @@ object testDemo {
     val validPathStationNoSet : mutable.Set[String] = mutable.Set()
     ODStationSet.foreach(x => {
       val vp = validPathSet(x)
-      for (v <- vp.indices)
+      for (v <- vp)
       {
-        validPathStationNoSet.++=(vp(v).toSet)
+        validPathStationNoSet.++=(v.toSet)
       }
     })
 
@@ -98,22 +98,41 @@ object testDemo {
       (macId, (time, station))
     }).cache()
 
-    val macStation_Only = macRDD.map(x=>(x._1, x._2._2)).groupByKey().mapValues(_.toSet)
+    val macStation_Only = macRDD.map(x=>(x._1, x._2._2)).groupByKey().mapValues(_.toSet).filter(_._2.size > 3)
 
     /*-----------------------------------------------------------------------------------------*/
 
     // 过滤出候选集合
     // 15308762 -> 2572154
-    // 15308762 -> 29493 (添加设置size比较时)
-    val candidateMacSet = macStation_Only.filter(x => validPathStationNameSet.union(x._2).equals(validPathStationNameSet) &&
-    x._2.size >= validPathStationNameSet.size / 5)
+    // 15308762 -> 29493 (设置size比较时)
+    val candidateMacSet = macStation_Only.filter(x => validPathStationNameSet.union(x._2).equals(validPathStationNameSet))
     //println("candidates:" + candidateMacSet.count())
     //candidateMacSet.saveAsTextFile(args(4))
 
     // 处理候选集mac对应的信息备用
     val candidateMacIds = candidateMacSet.map(x => x._1).collect().toSet
+    println("candidateMacIds:" + candidateMacIds.size)
+
     val candidateMacInfo = macRDD.filter(x => candidateMacIds.contains(x._1))
     val formatMacInfo = candidateMacInfo.groupByKey().mapValues(_.toList.sortBy(_._1))
+
+//    val removeConflict = formatMacInfo.filter(line => {
+//      var flag = true
+//      val macArray = line._2
+//      for (a <- personalOD if flag){
+//        val l = macArray.indexWhere(_._1 >= a._2 - 300)
+//        val r = macArray.lastIndexWhere(_._1 <= a._2 + 300)
+//        if (l != -1 && r != -1){
+//          for (i <- l.to(r) if flag){
+//            if (macArray(i)._2 == a._3)
+//              flag = true
+//            else
+//              flag = false
+//          }
+//        }
+//      }
+//      flag
+//    })
 
     // 处理OD数据备用,主要是把有效路径的站点编号转换为名称
     var perODMap : mutable.Map[(String, String), List[List[String]]] = mutable.Map()
@@ -149,7 +168,7 @@ object testDemo {
           val paths = perODMap((so, sd))
           val start = macInfo.indexWhere(_._1 > to - 300)
           val end = macInfo.lastIndexWhere(_._1 < td + 300)
-          if (end >= start && start >= 0){
+          if (start >= 0 && end >= start){
             var temp_score = 0
             var index_mac = start
             for (path <- paths){

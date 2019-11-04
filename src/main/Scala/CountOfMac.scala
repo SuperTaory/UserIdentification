@@ -1,8 +1,8 @@
 import org.apache.spark.{SparkConf, SparkContext}
 
-object TopOfMac {
+object CountOfMac {
   def main(args: Array[String]): Unit = {
-    val conf = new SparkConf().setAppName("TopOfMac")
+    val conf = new SparkConf().setAppName("CountOfMac")
     val sc = new SparkContext(conf)
 
     val macFile = sc.textFile(args(0))
