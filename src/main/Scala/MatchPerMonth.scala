@@ -1,5 +1,5 @@
 import java.text.SimpleDateFormat
-import java.util.TimeZone
+import java.util.{Calendar, TimeZone}
 
 import org.apache.spark.{SparkConf, SparkContext}
 
@@ -96,7 +96,7 @@ object MatchPerMonth {
       (macId, (time, station))
     })
 
-    val groupedMacInfo = macFile.groupByKey().filter(_._2.size > 3).mapValues(_.toList.sortBy(_._1))
+    val groupedMacInfo = macFile.groupByKey().mapValues(_.toList.sortBy(_._1))
 
     //    println(groupedMacInfo.count())
 
