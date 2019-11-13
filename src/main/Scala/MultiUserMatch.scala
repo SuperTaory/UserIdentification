@@ -194,9 +194,9 @@ object MultiUserMatch {
                 else if (coincideList.length >= 2) {
                   path_score = (coincideList.last - coincideList.head + 1).toFloat / path.length
                   // 如果出现路径完整匹配则额外加一分
-                  if (coincideList.head == 0 && coincideList.last == path.length-1)
-                    if (macArray(l)._2 == path.head && macArray(r)._2 == path.last)
-                      path_score += 1
+//                  if (coincideList.head == 0 && coincideList.last == path.length-1)
+//                    if (macArray(l)._2 == path.head && macArray(r)._2 == path.last)
+//                      path_score += 1
                 }
                 temp_score = max(temp_score, path_score)
               }
@@ -241,7 +241,7 @@ object MultiUserMatch {
 //      else
 //        false
 //    })
-    val topRDD = mergeRDD.filter(_._4 > 1)
+    val topRDD = mergeRDD.filter(_._4 > 2)
 
 
 
