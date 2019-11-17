@@ -60,9 +60,11 @@ object MultiUserMatch {
       ((pid, weeks), (time, station, tag))
     }).cache()
 
+    // 挑选OD记录最多的部分smartcardID
     val countRDD = personalOD.map(x => (x._1._1, 1)).reduceByKey(_ + _).sortBy(_._2, ascending = false).take(100)
 
     val countRDDSet = countRDD.map(_._1).toSet
+    // 过滤出这部分smartcardID的OD数据
     val selectedRDD = personalOD.filter(x => countRDDSet.contains(x._1._1))
 
 //    val groupByPid = personalOD.groupBy(_._1._1).mapValues(_.toList.sortBy(_._2._1))
@@ -106,9 +108,11 @@ object MultiUserMatch {
 //      validPathStationSet += (od -> temp_set)
 //    })
 
+    // 按照（smartcardID,week）分组，然后再按周分组
     val groupByWeeks = selectedRDD.groupByKey().mapValues(_.toList.sortBy(_._1)).map(x => (x._1._2, (x._1._1, x._2))).
       groupByKey().mapValues(_.toList)
 
+    // 共享为广播变量
     val broadcastODInfo = sc.broadcast(groupByWeeks.collect())
 
     /*----------------------------------------------------------------------------------------------------------------*/
@@ -125,6 +129,8 @@ object MultiUserMatch {
 
     val groupedMacInfo = macFile.groupByKey().mapValues(_.toList.sortBy(_._1)).map(x => (x._1._2, (x._1._1, x._2)))
 
+    // 通过广播变量和flatmap结合替代shuffle过程，避免了OOM
+    // 生成每一个smartcardID和macID的每周数据的配对
     val ODInfo = broadcastODInfo.value.toMap
     val flatenODAndMac = groupedMacInfo.flatMap(line => {
       val ODWeekInfo = ODInfo(line._1)
@@ -134,6 +140,7 @@ object MultiUserMatch {
     })
 
 
+    // 过滤掉与OD冲突的数据
     val joinedMacAndOD = flatenODAndMac.filter(line => {
       val macArray = line._2._2._2
       val ODArray = line._2._1._2
@@ -207,6 +214,7 @@ object MultiUserMatch {
         }
         index += 1
       }
+      // 生成每对smartcardID和MacID的每周相似度
       ((ODId, macId), (weeks, score))
     })
 
