@@ -215,7 +215,7 @@ object ComparisonOfWeekAndMonth {
     val resultRDD = unionRDD.groupBy(_._1._1).mapValues(_.toList.sortBy(_._1._2)).map(line => {
       val smartCardId = line._1
       val total = line._2.last._2
-      val avg = total._2 / line._2.length
+      val avg = total._2 / (line._2.length - 1)
       var detail = ""
       var flag = false
 
