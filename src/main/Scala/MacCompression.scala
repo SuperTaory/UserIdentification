@@ -34,7 +34,8 @@ object MacCompression {
       val macId = fields(0).drop(1)
       val time = fields(1).toLong
       val station = fields(2)
-      (macId, time, station)
+      val macCount = fields.last.dropRight(1).toInt
+      (macId, time, station, macCount)
     }).sortBy(line => (line._1, line._2), ascending = true)
     //println("before compression:" + transformedMacRDD.count())
     //transformedMacRDD.saveAsTextFile(args(1))
@@ -56,7 +57,7 @@ object MacCompression {
     }).cache()
     compressionRDD.saveAsTextFile(args(1))
 
-    // 将时间个数从时间戳转换为时间字符串
+    // 将时间格式从时间戳转换为时间字符串
     val changeTimeFormat = compressionRDD.map(line => {
       (line._1, transTimeToString(line._2.toString), line._3)
     })

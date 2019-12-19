@@ -6,9 +6,9 @@ import org.apache.spark.{SparkConf, SparkContext}
 import scala.collection.mutable.ListBuffer
 import scala.math.abs
 
-object RealODTimeInterval {
+object ODTimeInterval {
   def main(args: Array[String]): Unit = {
-    val conf = new SparkConf().setAppName("RealODTimeInterval")
+    val conf = new SparkConf().setAppName("ODTimeInterval")
     val sc = new SparkContext(conf)
 
 
@@ -28,14 +28,18 @@ object RealODTimeInterval {
       val des = stationNoToName.value(fields(1).toInt)
       // 换算成秒
       val time = (fields(2).toFloat * 60).toLong
-      ((sou, des), (time, 0))
+      (sou, des, time)
     }).cache()
 
+    // 保存最短路径时间
+    shortestPath.repartition(1).saveAsTextFile(args(2))
+    // 给最短路径时间设置标志0，为了后面补充统计实际最短时间时不完整的情况
+    val shortestPathTag = shortestPath.map(x => ((x._1, x._2), (x._3, 0)))
     // 转换成map便于查询
-    val shortestPathTime = sc.broadcast(shortestPath.collect().toMap)
+    val shortestPathTime = sc.broadcast(shortestPathTag.collect().toMap)
 
 
-    val readODFile = sc.textFile(args(2)).map(line => {
+    val readODFile = sc.textFile(args(3)).map(line => {
       val fields = line.split(',')
       val cardid = fields(0).drop(1)
       val time = transTimeFormat(fields(1))
@@ -51,7 +55,7 @@ object RealODTimeInterval {
       while (index + 1 < ODArray.length) {
         val stationO = ODArray(index)
         val stationD = ODArray(index+1)
-        if (stationO._3 == "21" && stationD._3 == "22" && stationD._1 - stationO._1 < shortestPathTime.value((stationO._2, stationD._2))._1 + 1200) {
+        if ( stationO._3 == "21" && stationD._3 == "22" && stationD._1 - stationO._1 < shortestPathTime.value((stationO._2, stationD._2))._1 + 1200) {
           val realTime = abs(ODArray(index)._1 - ODArray(index + 1)._1)
           ODList.append(((ODArray(index)._2, ODArray(index+1)._2), realTime))
           index += 1
@@ -64,25 +68,33 @@ object RealODTimeInterval {
       }
     })
 
+    // 保存全部由刷卡时间统计的OD时间间隔及频次
     val groupByOD = extractOD.groupByKey().mapValues(_.toList).map(line => {
       val count = line._2.length
       val sum = line._2.sum
       (line._1._1, line._1._2, sum / count, count)
-    }).filter(_._4 >= 100).repartition(1).sortBy(_._4, ascending = false).cache()
+    }).repartition(1).sortBy(_._4, ascending = false).cache()
 
-//    groupByOD.saveAsTextFile(args(3))
+    groupByOD.saveAsTextFile(args(4))
 
-    val unionData = groupByOD.map(line => ((line._1, line._2), (line._3, 1))).union(shortestPath).groupByKey().map(line => {
+    val unionData = groupByOD.filter(_._4 > 200).map(line => ((line._1, line._2), (line._3, 1))).union(shortestPathTag).groupByKey().map(line => {
       var time = 0L
+      var tag = ""
       val detail = line._2.toList.sortBy(_._2)
-      if (detail.length == 1 && detail.head._2 == 0)
+      // tag = "0"表示采用的最短路径时间作为OD时间间隔
+      if (detail.length == 1 && detail.head._2 == 0) {
         time = line._2.head._1
-      else if (detail.length == 2 && detail.head._2 == 0 && detail.last._2 == 1)
+        tag = "0"
+      }
+        // tag = "1"表示采用的统计刷卡时间得出的OD时间间隔
+      else if (detail.length == 2 && detail.head._2 == 0 && detail.last._2 == 1) {
         time = detail.last._1
-      (line._1._1, line._1._2, time)
+        tag = "1"
+      }
+      (line._1._1, line._1._2, time, tag)
     }).repartition(1).sortBy(_._1)
 
-    unionData.saveAsTextFile(args(3))
+    unionData.saveAsTextFile(args(5))
     sc.stop()
   }
 
