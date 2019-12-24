@@ -67,46 +67,6 @@ object MultiUserMatch {
     // 过滤出这部分smartcardID的OD数据
     val selectedRDD = personalOD.filter(x => countRDDSet.contains(x._1._1))
 
-//    val groupByPid = personalOD.groupBy(_._1._1).mapValues(_.toList.sortBy(_._2._1))
-//
-//    // 存储去重后的OD-pair
-//    val ODPairSet: mutable.Set[(String, String)] = mutable.Set()
-//    groupByPid.foreach(line => {
-//      var index = 0
-//      val ODArray = line._2
-//      while (index + 1 < ODArray.length) {
-//        if (ODArray(index)._2._3 == "21" && ODArray(index + 1)._2._3 == "22" && ODArray(index + 1)._2._1 - ODArray(index)._2._1 < 10800) {
-//          // 把站点名转换为编号
-//          val so = ODArray(index)._2._2
-//          val sd = ODArray(index + 1)._2._2
-//          ODPairSet.add((stationNameToNo(so), stationNameToNo(sd)))
-//          index += 1
-//        }
-//        index += 1
-//      }
-//    })
-//
-//    // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
-//    var perODMap : mutable.Map[(String, String), List[List[String]]] = mutable.Map()
-//    // 将OD之间的有效路径涵盖的站点处理为Set集合，OD-pair作为键
-//    var validPathStationSet : mutable.Map[(String, String), mutable.Set[String]] = mutable.Map()
-//
-//    ODPairSet.foreach(x => {
-//      val od = (stationNoToName(x._1), stationNoToName(x._2))
-//      val vp = validPathSet(x)
-//      val paths = new ListBuffer[List[String]]
-//      val temp_set: mutable.Set[String] = mutable.Set()
-//      for (p <- vp) {
-//        val path = new ListBuffer[String]
-//        for (s <- p) {
-//          path.append(stationNoToName(s))
-//        }
-//        paths.append(path.toList)
-//        temp_set.++=(path.toSet)
-//      }
-//      perODMap += (od -> paths.toList)
-//      validPathStationSet += (od -> temp_set)
-//    })
 
     // 按照（smartcardID,week）分组，然后再按周分组
     val groupByWeeks = selectedRDD.groupByKey().mapValues(_.toList.sortBy(_._1)).map(x => (x._1._2, (x._1._1, x._2))).
@@ -230,28 +190,7 @@ object MultiUserMatch {
       (ODId, macId, detail.dropRight(1), total)
     }).filter(_._4 > 0).sortBy(x => (x._1, x._4), ascending = false)
 
-//    val topRDD = mergeRDD.flatMap(line => {
-//      for (v <- line._2) yield { v }
-//    })
-
-//    var baseID = "null"
-//    var count = 50
-//    val topRDD = mergeRDD.filter(line => {
-//      if (baseID == line._1 && count >= 0){
-//        count -= 1
-//        true
-//      }
-//      else if (baseID != line._1){
-//        baseID = line._1
-//        count = 49
-//        true
-//      }
-//      else
-//        false
-//    })
     val topRDD = mergeRDD.filter(_._4 > 2)
-
-
 
     topRDD.saveAsTextFile(args(4))
 

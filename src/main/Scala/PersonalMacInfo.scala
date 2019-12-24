@@ -1,7 +1,7 @@
 import java.text.SimpleDateFormat
 import java.util.TimeZone
 
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.{SQLContext, SparkSession}
 import org.apache.spark.{SparkConf, SparkContext}
 
 import scala.collection.mutable
@@ -12,7 +12,9 @@ object PersonalMacInfo {
 //    conf.set("dfs.client.block.write.replace-datanode-on-failure.policy","NEVER")
 //    conf.set("dfs.client.block.write.replace-datanode-on-failure.enable","true")
     val sc = new SparkContext(conf)
-    val sq = new SQLContext(sc)
+    val sq = SparkSession.builder().config(conf).getOrCreate()
+
+    //    val sq = new SQLContext(sc)
 
     // 读取要统计的macID
     val macIDFile = sc.textFile(args(0))
@@ -27,8 +29,8 @@ object PersonalMacInfo {
     val macFile = sq.read.parquet(args(1))
     macFile.printSchema()
     val macSchema = macFile.schema
-    //    macFile.createOrReplaceTempView("MacTable")
-    macFile.registerTempTable("MacTable")
+    macFile.createOrReplaceTempView("MacTable")
+//    macFile.registerTempTable("MacTable")
     // 1559318400是指2019/06/01 00:00:00对应的unix时间戳
     val macRDD = sq.sql("select * from MacTable where " + macSchema.fields(0).name + " in " + macIdString).rdd
 

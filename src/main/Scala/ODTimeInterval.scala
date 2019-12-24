@@ -32,7 +32,7 @@ object ODTimeInterval {
     }).cache()
 
     // 保存最短路径时间
-    shortestPath.repartition(1).saveAsTextFile(args(2))
+    shortestPath.repartition(1).saveAsTextFile(args(2) + "/ShortPathTime")
     // 给最短路径时间设置标志0，为了后面补充统计实际最短时间时不完整的情况
     val shortestPathTag = shortestPath.map(x => ((x._1, x._2), (x._3, 0)))
     // 转换成map便于查询
@@ -75,7 +75,7 @@ object ODTimeInterval {
       (line._1._1, line._1._2, sum / count, count)
     }).repartition(1).sortBy(_._4, ascending = false).cache()
 
-    groupByOD.saveAsTextFile(args(4))
+    groupByOD.saveAsTextFile(args(2) + "/AFCStatistics")
 
     val unionData = groupByOD.filter(_._4 > 200).map(line => ((line._1, line._2), (line._3, 1))).union(shortestPathTag).groupByKey().map(line => {
       var time = 0L
@@ -94,7 +94,7 @@ object ODTimeInterval {
       (line._1._1, line._1._2, time, tag)
     }).repartition(1).sortBy(_._1)
 
-    unionData.saveAsTextFile(args(5))
+    unionData.saveAsTextFile(args(2) + "/CompleteTimeInterval")
     sc.stop()
   }
 

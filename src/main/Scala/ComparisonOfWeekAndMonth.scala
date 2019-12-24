@@ -2,11 +2,13 @@ import java.text.SimpleDateFormat
 import java.util.{Calendar, TimeZone}
 
 import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.util.LongAccumulator
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
-import scala.math.{max, abs}
+import scala.math.{abs, max}
 
+// 从AFC中选取部分数据和全部AP数据匹配
 object ComparisonOfWeekAndMonth {
   def main(args: Array[String]): Unit = {
     val conf = new SparkConf().setAppName("ComparisonOfWeekAndMonth")
@@ -31,17 +33,28 @@ object ComparisonOfWeekAndMonth {
       val pathStations = new ListBuffer[String]
       fields.foreach(x => pathStations.append(stationNoToName.value(x.toInt)))
       ((sou, des), pathStations.toList)
-    }).cache()
+    }).groupByKey().mapValues(_.toList).cache()
 
     // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
-    val perODMap = validPathFile.groupByKey().mapValues(_.toList).collect().toMap
+    val perODMap = sc.broadcast(validPathFile.collect().toMap)
+
     // 将OD之间的有效路径涵盖的站点处理为Set集合，OD-pair作为键
-    val validPathStationSetRDD  = validPathFile.groupByKey().mapValues(v => {
+    val validPathStationSetRDD  = validPathFile.map(v => {
       val temp_set: mutable.Set[String] = mutable.Set()
-      v.toList.foreach(path => temp_set.++=(path.toSet))
-      temp_set
+      v._2.foreach(path => temp_set.++=(path.toSet))
+      (v._1, temp_set)
     })
     val validPathStationSet = sc.broadcast(validPathStationSetRDD.collect().toMap)
+
+//    // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
+//    val perODMap = validPathFile.groupByKey().mapValues(_.toList).collect().toMap
+//    // 将OD之间的有效路径涵盖的站点处理为Set集合，OD-pair作为键
+//    val validPathStationSetRDD  = validPathFile.groupByKey().mapValues(v => {
+//      val temp_set: mutable.Set[String] = mutable.Set()
+//      v.toList.foreach(path => temp_set.++=(path.toSet))
+//      temp_set
+//    })
+//    val validPathStationSet = sc.broadcast(validPathStationSetRDD.collect().toMap)
 
 
     // 读取最短路径的时间信息
@@ -99,7 +112,7 @@ object ComparisonOfWeekAndMonth {
 
     val groupedMacInfo = macFile.groupByKey().mapValues(_.toList.sortBy(_._1)).map(x => (x._1._2, (x._1._1, x._2)))
 
-    // 通过广播变量和flatmap结合替代shuffle过程，避免了OOM
+    // 通过广播变量和flatmap结合替代shuffle过程，避免OOM
     // 生成每一个smartcardID和macID的每周数据的配对
     val flatenODAndMac = groupedMacInfo.flatMap(line => {
       val ODInfo = broadcastODInfo.value
@@ -146,7 +159,7 @@ object ComparisonOfWeekAndMonth {
           val sd = ODArray(index + 1)._2
           val to = ODArray(index)._1
           val td = ODArray(index + 1)._1
-          val paths = perODMap((so, sd))
+          val paths = perODMap.value((so, sd))
           val pathStationSet = validPathStationSet.value((so, sd))
           val l = macArray.indexWhere(_._1 > to - 120)
           val r = macArray.lastIndexWhere(_._1 < td + 120)
@@ -208,8 +221,10 @@ object ComparisonOfWeekAndMonth {
     val unionRDD = monthRDD.union(rankedScoreOfWeek).groupByKey().mapValues(_.toList.sortBy(_._2).reverse.head)
 
     // 使用累加器统计可能出现overlap的smartcardId的数量并保存这些ID
-    val mayOverlap = sc.accumulator(0)
-    val highSimilarity = sc.accumulator(0)
+    val mayOverlap = new LongAccumulator()
+    sc.register(mayOverlap)
+    val highSimilarity = new LongAccumulator()
+    sc.register(highSimilarity)
 
     // 按照smartcardID合并数据，并统计overlap情况
     val resultRDD = unionRDD.groupBy(_._1._1).mapValues(_.toList.sortBy(_._1._2)).map(line => {
