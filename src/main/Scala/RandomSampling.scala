@@ -1,6 +1,7 @@
 import org.apache.spark.{SparkConf, SparkContext}
 import GeneralFunctionSets.dayOfMonth_long
 import GeneralFunctionSets.transTimeToString
+import GeneralFunctionSets.transTimeToTimestamp
 
 import org.apache.spark.rdd.OrderedRDDFunctions
 import scala.collection.mutable
@@ -26,7 +27,7 @@ object RandomSampling {
     val macFile = sc.textFile(args(1)).map(line => {
       val fields = line.split(',')
       val macId = fields(0).drop(1)
-      val time = fields(1).toLong
+      val time = transTimeToTimestamp(fields(1))
       val station = fields(2)
       val dur = fields(3).dropRight(1).toLong
       (macId, (time, station, dur))
@@ -35,7 +36,7 @@ object RandomSampling {
     // 划分为出行片段并标记出行日期
     val dipartition = macFile.map(line => {
       // 设置出行片段长度阈值
-      val m = 1
+      val m = 2
       val MacId = line._1
       val data = line._2
       val segement = new ListBuffer[(Long, String, Long)]
@@ -100,12 +101,15 @@ object RandomSampling {
           sampledData.append(s)
         }
       }
-      (line._1, sampledData)
+      (line._1, sampledData, chosenDays)
     })
 
     // 对出行片段采样
     val samplingOnPartitions = samplingByDay.map(line => {
       val sampledData = new ListBuffer[(Long, String, Long)]
+      val timeTag = new ListBuffer[Long]
+      var count = line._2.length
+      val days = line._3
       for (s <- line._2) {
         val tempData = new ListBuffer[((Long, String, Long), Double)]
         // 设置随机数种子seed
@@ -125,10 +129,12 @@ object RandomSampling {
             tempData.append(((v._1, v._2, v._3), pow(r.nextFloat(), sum / v._3)))
           }
         }
-        tempData.sortBy(_._2).takeRight(2).foreach(x => sampledData.append(x._1))
+        val temp = tempData.sortBy(_._2).takeRight(2).toList
+        temp.foreach(x => sampledData.append(x._1))
+        timeTag.append(abs(temp.last._1._1 - temp.head._1._1) / 300)
       }
-      (line._1, sampledData.sortBy(_._1))
-    })
+      (line._1, sampledData.sortBy(_._1), timeTag.toList, count, days.size)
+    }).cache()
 
     val results = samplingOnPartitions.flatMap(line => {
       for (v <- line._2) yield
@@ -136,6 +142,18 @@ object RandomSampling {
     }).repartition(100).sortBy(x => (x._1, x._2))
 
     results.saveAsTextFile(args(2))
+
+    // 统计出行次数分布
+    val travelNumAP = samplingOnPartitions.map(x => (x._4, 1)).reduceByKey(_+_).repartition(1).sortByKey()
+    travelNumAP.saveAsTextFile(args(3) + "/AP-Num")
+
+    // 统计出行天数分布
+    val travelDaysAP = samplingOnPartitions.map(x => (x._5, 1)).reduceByKey(_+_).repartition(1).sortByKey()
+    travelDaysAP.saveAsTextFile(args(3) + "/AP-Days")
+
+    // 统计出行片段的时间长度分布
+    val travelTimeLengthAP = samplingOnPartitions.flatMap(line => for (v <- line._3) yield (v, 1)).reduceByKey(_+_).repartition(1).sortByKey()
+    travelTimeLengthAP.saveAsTextFile(args(3) + "/AP-TimeLength")
 
     sc.stop()
   }
