@@ -78,7 +78,7 @@ object MacCompression {
       var preTime = 0L
       val processedData = new ListBuffer[(Long, String, Long)]
       for (x <- line._2){
-        if (x._2.equals(tempStation) && x._1 - preTime < 600) {
+        if (x._2.equals(tempStation) && x._1 - preTime < 300) {
           interval = x._1 - tempTime
           preTime = x._1
         }
