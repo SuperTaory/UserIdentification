@@ -6,15 +6,21 @@ object CountOfMac {
     val sc = new SparkContext(conf)
 
     val macFile = sc.textFile(args(0))
+//    val macRDD = macFile.map(line => {
+//      val fields = line.split(',')
+//      val macID = fields(0).drop(1)
+//      val time = fields(1)
+//      val station = fields(2).dropRight(1)
+//      (macID, time, station)
+//    })
+//
+//    val countRDD = macRDD.map(x => (x._1, 1)).reduceByKey(_+_).sortBy(_._2, ascending = false)
+
     val macRDD = macFile.map(line => {
-      val fields = line.split(',')
-      val macID = fields(0).drop(1)
-      val time = fields(1)
-      val station = fields(2).dropRight(1)
-      (macID, time, station)
+      (line.split(',').last.dropRight(1).toInt, 1)
     })
 
-    val countRDD = macRDD.map(x => (x._1, 1)).reduceByKey(_+_).sortBy(_._2, ascending = false)
+    val countRDD = macRDD.reduceByKey(_+_).repartition(1).sortByKey(ascending = false)
     countRDD.saveAsTextFile(args(1))
 
     //val top = countRDD.take(10).map(_._1).toSet
