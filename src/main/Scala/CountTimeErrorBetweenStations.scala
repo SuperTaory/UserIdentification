@@ -1,7 +1,9 @@
 import java.text.SimpleDateFormat
 import java.util.TimeZone
 
+import org.apache.spark.util.LongAccumulator
 import org.apache.spark.{SparkConf, SparkContext}
+
 import scala.math.abs
 
 object CountTimeErrorBetweenStations {
@@ -40,8 +42,10 @@ object CountTimeErrorBetweenStations {
       (cid, (time, station, tag))
     }).groupByKey().mapValues(_.toList.sortBy(_._1))
 
-    val countOD = sc.accumulator(0)
-    val totalTimeError = sc.accumulator(0)
+    val countOD = new LongAccumulator()
+    sc.register(countOD)
+    val totalTimeError = new LongAccumulator()
+    sc.register(totalTimeError)
 
     val computeError = testData.map(line => {
       val ODArray = line._2

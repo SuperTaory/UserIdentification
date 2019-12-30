@@ -38,4 +38,14 @@ object GeneralFunctionSets {
     calendar.setTime(time)
     calendar.get(Calendar.DAY_OF_MONTH)
   }
+
+  def hourOfDay(timeString : String) : Int = {
+    val pattern = "yyyy-MM-dd HH:mm:ss"
+    val dateFormat = new SimpleDateFormat(pattern)
+    dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"))
+    val time = dateFormat.parse(timeString)
+    val calendar = Calendar.getInstance()
+    calendar.setTime(time)
+    calendar.get(Calendar.HOUR_OF_DAY)
+  }
 }
