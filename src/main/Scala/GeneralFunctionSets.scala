@@ -48,4 +48,19 @@ object GeneralFunctionSets {
     calendar.setTime(time)
     calendar.get(Calendar.HOUR_OF_DAY)
   }
+
+  // 获取时间戳对应当天的秒数
+  def secondsOfDay(t : Long) : Int = {
+    val pattern = "yyyy-MM-dd HH:mm:ss"
+    val dateFormat = new SimpleDateFormat(pattern)
+    dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"))
+    val timeString = dateFormat.format(t * 1000)
+    val time = dateFormat.parse(timeString)
+    val calendar = Calendar.getInstance()
+    calendar.setTime(time)
+    val H = calendar.get(Calendar.HOUR_OF_DAY)
+    val M = calendar.get(Calendar.MINUTE)
+    val S = calendar.get(Calendar.SECOND)
+    ( H * 60 + M ) * 60 + S
+  }
 }
