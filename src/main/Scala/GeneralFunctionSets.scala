@@ -50,7 +50,7 @@ object GeneralFunctionSets {
   }
 
   // 获取时间戳对应当天的秒数
-  def secondsOfDay(t : Long) : Int = {
+  def secondsOfDay(t : Long) : Long = {
     val pattern = "yyyy-MM-dd HH:mm:ss"
     val dateFormat = new SimpleDateFormat(pattern)
     dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"))

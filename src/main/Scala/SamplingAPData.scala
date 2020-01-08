@@ -81,7 +81,7 @@ object SamplingAPData {
               case _ => attachInterval = 1800
             }
             val realInterval = abs(s._1 - segment.last._1 - segment.last._3)
-            if (realInterval > odInterval + attachInterval || realInterval < odInterval * 0.5) {
+            if (realInterval > odInterval + attachInterval || ( odInterval > 900 && realInterval < odInterval * 0.5 )) {
               if (segment.length > m) {
                 segments.append(segment.toList)
                 daySets.add(dayOfMonth_long(segment.head._1))
@@ -116,32 +116,31 @@ object SamplingAPData {
     // 对出行片段采样
     val samplingOnPartitions = samplingByDay.map(line => {
       val sampledData = new ListBuffer[((Long, String, Long), (Long, String, Long))]
-//      val timeTag = new ListBuffer[Long]
-//      val count = line._2.length
-//      val days = line._3
-      for (s <- line._2) {
-        val tempData = new ListBuffer[((Long, String, Long), Double)]
-        // 设置随机数种子seed
-        val r = new Random(System.currentTimeMillis())
-        var sum = 0F
-        for (v <- s){
-          if (v._3 < 30)
-            sum += 30
-          else{
-            sum += v._3
-          }
-        }
-        for (v <- s) {
-          if (v._3 < 30)
-            tempData.append((v, pow(r.nextFloat(), sum / 30)))
-          else {
-            tempData.append((v, pow(r.nextFloat(), sum / v._3)))
-          }
-        }
-        val temp = tempData.sortBy(_._2).takeRight(2).toList.sortBy(_._1._1)
-        sampledData.append((temp.head._1, temp.last._1))
-//        timeTag.append(abs(temp.last._1._1 - temp.head._1._1) / 300)
+      for (p <- line._2) {
+        sampledData.append((p.head, p.last))
       }
+//      for (s <- line._2) {
+//        val tempData = new ListBuffer[((Long, String, Long), Double)]
+//        // 设置随机数种子seed
+//        val r = new Random(System.currentTimeMillis())
+//        var sum = 0F
+//        for (v <- s){
+//          if (v._3 < 30)
+//            sum += 30
+//          else{
+//            sum += v._3
+//          }
+//        }
+//        for (v <- s) {
+//          if (v._3 < 30)
+//            tempData.append((v, pow(r.nextFloat(), sum / 30)))
+//          else {
+//            tempData.append((v, pow(r.nextFloat(), sum / v._3)))
+//          }
+//        }
+//        val temp = tempData.sortBy(_._2).takeRight(2).toList.sortBy(_._1._1)
+//        sampledData.append((temp.head._1, temp.last._1))
+//      }
       (line._1, sampledData.toList)
     })
 

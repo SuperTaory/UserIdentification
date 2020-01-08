@@ -83,7 +83,7 @@ object NormalMacData {
               case _ => attachInterval = 1800
             }
             val realInterval = abs(s._1 - segment.last._1 - segment.last._3)
-            if (realInterval > odInterval + attachInterval || realInterval < odInterval * 0.5) {
+            if (realInterval > odInterval + attachInterval || ( odInterval > 900 && realInterval < odInterval * 0.5 )) {
               if (segment.length > m) {
                 segments.append(segment.toList)
                 daySets.add(dayOfMonth_long(segment.head._1))
