@@ -15,13 +15,12 @@ object Model {
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
       .builder()
-      .master("local")
       .appName("OD Distribution")
       .getOrCreate()
     val sc = spark.sparkContext
 
     // 读取地铁站点名和编号映射关系
-    val stationFile = sc.textFile(args(0))
+    val stationFile = sc.textFile(args(0) + "/liutao/AllInfo/stationInfo-UTF-8.txt")
     val stationNoToNameRDD = stationFile.map(line => {
       val stationNo = line.split(',')(0)
       val stationName = line.split(',')(1)
@@ -31,7 +30,7 @@ object Model {
 
 
     // 读取所有有效路径的数据
-    val validPathFile = sc.textFile(args(1)).map(line => {
+    val validPathFile = sc.textFile(args(0) + "/liutao/AllInfo/allpath.txt").map(line => {
       // 仅保留站点编号信息
       val fields = line.split(' ').dropRight(5)
       val sou = stationNoToName.value(fields(0).toInt)
@@ -44,9 +43,19 @@ object Model {
     // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
     val validPathMap = sc.broadcast(validPathFile.collect().toMap)
 
+    // 读取站间时间间隔
+    val readODTimeInterval = sc.textFile(args(0) + "/liutao/UI/AllODTimeInterval/ShortPathTime/part-00000").map(line => {
+      val p = line.split(',')
+      val sou = p(0).drop(1)
+      val des = p(1)
+      val interval = p(2).dropRight(1).toLong
+      ((sou, des), interval)
+    })
+    val ODIntervalMap = sc.broadcast(readODTimeInterval.collect().toMap)
+
     // Pre-processing
     // 读取AFC数据: (020798332,2019-06-24 10:06:50,碧海湾,2019-06-24 10:25:09,桥头)
-    val AFCFile = sc.textFile(args(0)).map(line => {
+    val AFCFile = sc.textFile(args(0) + "/liutao/UI/SampledAFCData/part-00045").map(line => {
       val fields = line.split(',')
       val id = fields(0).drop(1)
       val ot = transTimeToTimestamp(fields(1))
@@ -75,7 +84,7 @@ object Model {
         stationCount.append(x._2)
         stationCount.append(x._4)
       })
-      val Q = 1
+      val Q = 2
       val topStations = stationCount.groupBy(x => x)
         .mapValues(_.size)
         .toArray
@@ -130,29 +139,37 @@ object Model {
           }
           if (o_to_c.k == d_to_c.k && o_to_c.k != 0)
             clusters.append(( o_to_c.k, v))
-//          else
-//            clusters.append((0, v))
+          else
+            clusters.append((0, v))
         }
-//        else
-//          clusters.append((0,v))
+        else
+          clusters.append((0,v))
       }
       // 按照所属类别分组
-      val grouped = clusters.groupBy(_._1).toArray
+      val grouped = clusters.groupBy(_._1).toArray.filter(x => x._1 > 0 && x._2.length > 5)
       // 存储出行模式集合
       val afc_patterns = new ArrayBuffer[(String, String)]()
-      grouped.foreach(g => {
-        // 同一类中数据按照进出站分组
-        val temp_data = g._2.toArray.groupBy(x => (x._2._2, x._2._4))
-        temp_data.foreach(v => {
-          // 超过总出行天数的1/2则视为出行模式
-          if ( daySets.size >= 7 && v._2.length >= daySets.size / 2) {
-            afc_patterns.append(v._1)
-          }
+      if (grouped.nonEmpty){
+        grouped.foreach(g => {
+          // 同一类中数据按照进出站分组
+          val temp_data = g._2.toArray.groupBy(x => (x._2._2, x._2._4))
+          temp_data.foreach(v => {
+            // 超过总出行天数的1/2则视为出行模式
+            if ( daySets.size >= 7 && v._2.length >= daySets.size / 2) {
+              afc_patterns.append(v._1)
+            }
+          })
         })
-      })
+      }
 
-      (line._1, pairs, afc_patterns.toArray, daySets)
-    })
+      // id、出行片段集合、出行模式集合、主要站点集合、出行日期集合
+      (daySets.size, (line._1, pairs, afc_patterns.toList, topStations.toList, daySets))
+    }).cache()
+
+
+    val AFCData = sc.broadcast(AFCPatterns.groupByKey().mapValues(_.toList).collect().toMap)
+
+//    AFCPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/testModel/afc")
 
 //    AFCPatterns.collect().foreach(x => {
 //      x.foreach(x => {
@@ -164,7 +181,7 @@ object Model {
 
 
     // 读取AP数据:(000000000000,2019-06-01 10:38:05,布吉,0,2019-06-01 10:43:50,上水径,15)
-    val APFile = sc.textFile(args(1)).map(line => {
+    val APFile = sc.textFile(args(0) + "/liutao/UI/SampledAPData/part-00023").map(line => {
       val fields = line.split(",")
       val id = fields(0).drop(1)
       val ot = transTimeToTimestamp(fields(1))
@@ -176,6 +193,7 @@ object Model {
       val o_day = dayOfMonth_long(ot)
       val d_day = dayOfMonth_long(dt)
       val day = if (o_day == d_day) o_day else 0
+      // id、（起始时间、起始站点、停留时间、到达时间、目的站点、 停留时间、出行日期）
       (id, (ot, os, o_stay, dt, ds, d_stay, day))
     })
 
@@ -195,7 +213,7 @@ object Model {
         stationCount.append((x._2, x._3))
         stationCount.append((x._5, x._6))
       })
-      val Q = 1
+      val Q = 2
       val topStations = stationCount.groupBy(x => x._1).mapValues(v => {
         var sum = 0
         v.foreach(x => sum += x._2)
@@ -222,7 +240,7 @@ object Model {
       }
       val density_stamp = density_stamp_Buffer.toArray.sortBy(_._2)
 
-      // 判断是否存在聚类中心，若返回为空则不存在，否则分类
+      // 聚类中心，若返回为空则不存在，否则分类
       val cluster_center = z_score(density_stamp)
 //      cluster_center.foreach(x => println(x._1.toString + '\t' + (x._2/3600).toString + ":" + (x._2%3600/60).toString + ":" + (x._2%3600%60).toString))
 //      println("DaySets:" + daySets.toArray.sorted.mkString(","))
@@ -249,77 +267,138 @@ object Model {
           }
           if (o_to_c.k == d_to_c.k && o_to_c.k != 0)
             clusters.append(( o_to_c.k, v))
-//          else
-//            clusters.append((0, v))
+          else
+            clusters.append((0, v))
         }
-//        else
-//          clusters.append((0,v))
+        else
+          clusters.append((0,v))
       }
-      val grouped = clusters.groupBy(_._1).toArray
+      // 仅当类簇中数据个数大于5时进行出行模式的提取
+      val grouped = clusters.groupBy(_._1).toArray.filter(x => x._1 > 0 && x._2.length > 5)
       // 存储AP的pattern
-      val ap_patterns = new ArrayBuffer[(String, String)]()
-      grouped.foreach(g => {
-        val pairNum = g._2.size
-        // 控制保留出现次数最多的p个站点
-        val p = 2
-        // 控制保留停留时间最长的q个站点
-        val q = 2
-        val osBuffer = new ArrayBuffer[(String, Long)]()
-        val dsBuffer = new ArrayBuffer[(String, Long)]()
-        g._2.foreach(x => {
-          osBuffer.append((x._2._2, x._2._3))
-          dsBuffer.append((x._2._5, x._2._6))
+      val ap_patterns = new ArrayBuffer[(Int, (String, String))]()
+      // 提取出行模式
+      if (grouped.nonEmpty) {
+        grouped.foreach(g => {
+          val pairNum = g._2.size
+          // 控制保留出现次数最多的p个站点
+          val p = 1
+          // 控制保留停留时间最长的q个站点
+          val q = 1
+          val osBuffer = new ArrayBuffer[(String, Long)]()
+          val dsBuffer = new ArrayBuffer[(String, Long)]()
+          g._2.foreach(x => {
+            osBuffer.append((x._2._2, x._2._3))
+            dsBuffer.append((x._2._5, x._2._6))
+          })
+          val osArray = osBuffer.groupBy(_._1).mapValues(x => {
+            var sum = 0L
+            x.foreach(v => sum += v._2)
+            (x.size, sum)
+          }).toArray
+          val top_os : mutable.Set[String] = mutable.Set()
+          // 保存起始站点出现次数最多的p个站点
+          osArray.filter(_._2._1 > 1).sortBy(_._2._1).takeRight(p).foreach(x => top_os.add(x._1))
+          // 保存起始站点停留时间最长的p个站点
+          osArray.sortBy(_._2._2).takeRight(q).foreach(x => top_os.add(x._1))
+
+          val dsArray = dsBuffer.groupBy(_._1).mapValues(x => {
+            var sum = 0L
+            x.foreach(v => sum += v._2)
+            (x.size, sum)
+          }).toArray
+          val top_ds : mutable.Set[String] = mutable.Set()
+          // 保存目的站点出现次数最多的q个站点
+          dsArray.filter(_._2._1 > 1).sortBy(_._2._1).takeRight(p).foreach(x => top_ds.add(x._1))
+          // 保存目的站点停留时间最长的q个站点
+          dsArray.sortBy(_._2._2).takeRight(q).foreach(x => top_ds.add(x._1))
+
+          // 计算覆盖同类出行中片段的比例cover
+          val coverThreshold = 0.6
+          val scoreBuffer = new ArrayBuffer[(String, String, Float)]()
+          for (pick_o <- top_os; pick_d <- top_ds) {
+            var flag = true
+            var count = 0f
+            val paths = validPathMap.value((pick_o, pick_d))
+            // 对当前类簇中的每一条出行片段
+            for (pair <- g._2) {
+              // 从可能为出行模式的有效路径中查找是否能覆盖当前出行片段
+              for (path <- paths if flag) {
+                if (path.indexOf(pair._2._2) >= 0 && path.indexOf(pair._2._5) > path.indexOf(pair._2._2)){
+                  count += 1
+                  flag = false
+                }
+              }
+              flag = true
+            }
+            scoreBuffer.append((pick_o, pick_d, count / pairNum))
+          }
+          // 选取覆盖度最高的OD对
+          val most_cover = scoreBuffer.maxBy(_._3)
+          // 若覆盖度大于阈值则加入到出行模式集合中
+          if (most_cover._3 > coverThreshold)
+            ap_patterns.append((g._1, (most_cover._1, most_cover._2)))
         })
-        val osArray = osBuffer.groupBy(_._1).mapValues(x => {
-          var sum = 0
-          x.foreach(v => sum += v._2)
-          (x.size, sum)
-        }).toArray
-        val top_os : mutable.Set[String] = mutable.Set()
-        // 保存起始站点出现次数最多的p个站点
-        osArray.sortBy(_._2._1).takeRight(p).foreach(x => top_os.add(x._1))
-        // 保存起始站点停留时间最长的p个站点
-        osArray.sortBy(_._2._2).takeRight(p).foreach(x => top_os.add(x._1))
+      }
 
-        val dsArray = dsBuffer.groupBy(_._1).mapValues(x => {
-          var sum = 0
-          x.foreach(v => sum += v._2)
-          (x.size, sum)
-        }).toArray
-        val top_ds : mutable.Set[String] = mutable.Set()
-        // 保存目的站点出现次数最多的q个站点
-        dsArray.sortBy(_._2._1).takeRight(q).foreach(x => top_ds.add(x._1))
-        // 保存目的站点停留时间最长的q个站点
-        dsArray.sortBy(_._2._2).takeRight(q).foreach(x => top_ds.add(x._1))
-
-        // 覆盖同类出行中片段的比例cover
-        val coverThreshold = 0.5
-        val scoreBuffer = new ArrayBuffer[(String, String, Float)]()
-        for (pick_o <- top_os; pick_d <- top_ds) {
-          var flag = true
-          var count = 0f
-          val paths = validPathMap.value((pick_o, pick_d))
-          // 对当前类簇中的每一条出行片段
-          for (pair <- g._2) {
-            // 从可能为出行模式的有效路径中查找是否能覆盖当前出行片段
-            for (path <- paths if flag) {
-              if (path.indexOf(pair._2._2) >= 0 && path.indexOf(pair._2._5) > path.indexOf(pair._2._2)){
-                count += 1
-                flag = false
+      // AP补全
+      val complement = new ArrayBuffer[((Long, String, Int, Long, String, Int, Int), Int)]()
+      if (ap_patterns.isEmpty) {
+        pairs.foreach(v => complement.append((v,0)))
+      }
+      else {
+        val patternMap = ap_patterns.toMap
+        grouped.foreach(g => {
+          if (patternMap.contains(g._1)) {
+            var flag = true
+            val pattern = patternMap(g._1)
+            val paths = validPathMap.value(pattern)
+            for (pair <- g._2) {
+              for (p <- paths if flag) {
+                val index_po = p.indexOf(pair._2._2)
+                val index_pd = p.indexOf(pair._2._5)
+                if (index_po >= 0 && index_pd > index_po) {
+                  if (index_po == 0  && index_pd == p.length-1) {
+                    flag = false
+                    complement.append((pair._2, pair._1))
+                  }
+                  else if (index_po == 0 && index_pd != p.length-1) {
+                    flag = false
+                    val new_dt = pair._2._4 + ODIntervalMap.value((pair._2._5, pattern._2))
+                    complement.append(((pair._2._1, pair._2._2, pair._2._3, new_dt, pattern._2, 0, pair._2._7), g._1))
+                  }
+                  else if (index_po != 0 && index_pd == p.length-1) {
+                    flag = false
+                    val new_ot = pair._2._1 - ODIntervalMap.value((pattern._1, pair._2._2))
+                    complement.append(((new_ot, pattern._1, 0, pair._2._4, pair._2._5, pair._2._6, pair._2._7), g._1))
+                  }
+                  else if (index_po != 0 && index_pd != p.length-1){
+                    flag = false
+                    val new_ot = pair._2._1 - ODIntervalMap.value((pattern._1, pair._2._2))
+                    val new_dt = pair._2._4 + ODIntervalMap.value((pair._2._5, pattern._2))
+                    complement.append(((new_ot, pattern._1, 0, new_dt, pattern._2, 0, pair._2._7), g._1))
+                  }
+                }
+              }
+              if (!flag)
+                flag = true
+              else {
+                // 不属于此出行模式，遂未补全
+                complement.append((pair._2, 0))
               }
             }
-            flag = true
           }
-          scoreBuffer.append((pick_o, pick_d, count / pairNum))
-        }
-        val most_cover = scoreBuffer.maxBy(_._3)
-        if (most_cover._3 > coverThreshold)
-          ap_patterns.append((most_cover._1, most_cover._2))
-      })
+          else {
+            // 当前类簇中的出行片段不存在出行模式
+            g._2.foreach(line => complement.append((line._2, 0)))
+          }
+        })
+      }
 
+      (line._1, complement.toList, ap_patterns.toList, topStations.toList, daySets)
+    }).cache()
+//    APPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/testModel/ap")
 
-
-    })
 
 //    APPatterns.collect().foreach(x => {
 //      x.foreach(x => {
@@ -328,6 +407,81 @@ object Model {
 //      })
 //      println()
 //    })
+
+
+    // 轨迹筛选与匹配
+    val mergeData = APPatterns.filter(_._5.size > 5).flatMap(ap => {
+      val floatingDays = 0
+      val start = ap._5.size - floatingDays
+      val candidateDays = AFCData.value.keys.toSet.filter(x => x >= start)
+      for (i <- candidateDays; afc <- AFCData.value(i)) yield{
+        (ap, afc)
+      }
+    }).filter(x => x._1._5.intersect(x._2._5).size > 2)
+
+    val matchData = mergeData.map(line => {
+      var score = 0f
+      val ap = line._1._2.sortBy(_._1._1)
+      val afc = line._2._2.sortBy(_._1)
+      val tr_ap_afc = new ArrayBuffer[(Int, Int)]()
+      val tr_ap = new ArrayBuffer[Int]()
+      val tr_afc = new ArrayBuffer[Int]()
+      var index_ap = 0
+      var index_afc = 0
+      while (index_ap < ap.length && index_afc < afc.length) {
+        val cur_ap = ap(index_ap)._1
+        val cur_afc = afc(index_afc)
+        if (cur_ap._4 < cur_afc._1) {
+          tr_ap.append(index_ap)
+          index_ap += 1
+        }
+        else if (cur_ap._1 > cur_afc._3) {
+          tr_afc.append(index_afc)
+          index_afc += 1
+        }
+        else if (cur_ap._1 > cur_afc._1 - 300 && cur_ap._4 < cur_afc._3 + 300){
+          val paths = validPathMap.value((cur_afc._2, cur_afc._4))
+          var flag = true
+          for (p <- paths if flag) {
+            if (p.indexOf(cur_ap._2) >= 0 && p.indexOf(cur_ap._5) > p.indexOf(cur_ap._2)) {
+              if (abs(cur_afc._1 + ODIntervalMap.value(p.head, cur_ap._2) - cur_ap._1) < 300) {
+                if (abs(cur_ap._4 + ODIntervalMap.value(cur_ap._5, p.last) - cur_afc._3) < 300) {
+                  flag = false
+                  tr_ap_afc.append((index_ap, index_afc))
+                  index_afc += 1
+                  index_ap += 1
+                }
+              }
+            }
+          }
+          if (flag) {
+            // 跳出while循环
+            index_afc = afc.length
+            index_ap = ap.length
+            tr_ap.clear()
+            tr_afc.clear()
+            tr_ap_afc.clear()
+          }
+        }
+        else {
+          index_afc = afc.length
+          index_ap = ap.length
+          tr_ap.clear()
+          tr_afc.clear()
+          tr_ap_afc.clear()
+        }
+      }
+
+      // 分为三类完毕,开始计算相似度
+
+
+    })
+
+
+
+//    println("---------------:" + AFCPatterns.count())
+//    println("---------------:" + APPatterns.count())
+//    println("---------------:" + mergeAndMatch.count())
 
     spark.stop()
   }
@@ -372,6 +526,7 @@ object Model {
       z_score.append((v, z_value))
     }
     val result = new ArrayBuffer[(Int, Long)]()
+    // z-score大于3认为是类簇中心
     val clustersInfo = z_score.toArray.filter(_._2 >= 3)
     for (i <- clustersInfo.indices) {
       result.append((i+1, clustersInfo(i)._1._3))
