@@ -55,7 +55,7 @@ object Model {
 
     // Pre-processing
     // 读取AFC数据: (020798332,2019-06-24 10:06:50,碧海湾,2019-06-24 10:25:09,桥头)
-    val AFCFile = sc.textFile(args(0) + "/liutao/UI/SampledAFCData/part-00045").map(line => {
+    val AFCFile = sc.textFile(args(0) + "/liutao/UI/SampledAFCData/part-00021").map(line => {
       val fields = line.split(',')
       val id = fields(0).drop(1)
       val ot = transTimeToTimestamp(fields(1))
@@ -68,8 +68,8 @@ object Model {
       (id, (ot, os, dt, ds, day))
     })
 
-    // 划分AFC
-    val AFCPartitions = AFCFile.groupByKey().mapValues(_.toList.sortBy(_._1))
+    // 划分AFC,仅保留出行次数大于10次的数据
+    val AFCPartitions = AFCFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 10)
 
     // AFC模式提取-基于核密度估计的聚类
     val AFCPatterns = AFCPartitions.map(line => {
@@ -148,15 +148,15 @@ object Model {
       // 按照所属类别分组
       val grouped = clusters.groupBy(_._1).toArray.filter(x => x._1 > 0 && x._2.length > 5)
       // 存储出行模式集合
-      val afc_patterns = new ArrayBuffer[(String, String)]()
+      val afc_patterns = new ArrayBuffer[(Int, (String, String))]()
       if (grouped.nonEmpty){
         grouped.foreach(g => {
           // 同一类中数据按照进出站分组
           val temp_data = g._2.toArray.groupBy(x => (x._2._2, x._2._4))
           temp_data.foreach(v => {
             // 超过总出行天数的1/2则视为出行模式
-            if ( daySets.size >= 7 && v._2.length >= daySets.size / 2) {
-              afc_patterns.append(v._1)
+            if ( daySets.size >= 5 && v._2.length >= daySets.size / 2) {
+              afc_patterns.append((g._1, v._1))
             }
           })
         })
@@ -164,24 +164,17 @@ object Model {
 
       // id、出行片段集合、出行模式集合、主要站点集合、出行日期集合
       (daySets.size, (line._1, pairs, afc_patterns.toList, topStations.toList, daySets))
-    }).cache()
+    }).filter(_._1 >= 5)
 
 
     val AFCData = sc.broadcast(AFCPatterns.groupByKey().mapValues(_.toList).collect().toMap)
 
 //    AFCPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/testModel/afc")
 
-//    AFCPatterns.collect().foreach(x => {
-//      x.foreach(x => {
-//        println(x._1)
-//        x._2.foreach(v => println(transTimeToString(v._2._1) + ',' + v._2._2 + ',' + transTimeToString(v._2._3) + ',' + v._2._4))
-//      })
-//      println()
-//    })
 
 
     // 读取AP数据:(000000000000,2019-06-01 10:38:05,布吉,0,2019-06-01 10:43:50,上水径,15)
-    val APFile = sc.textFile(args(0) + "/liutao/UI/SampledAPData/part-00023").map(line => {
+    val APFile = sc.textFile(args(0) + "/liutao/UI/SampledAPData_n/part*").map(line => {
       val fields = line.split(",")
       val id = fields(0).drop(1)
       val ot = transTimeToTimestamp(fields(1))
@@ -198,7 +191,7 @@ object Model {
     })
 
     // 划分AP
-    val APPartitions = APFile.groupByKey().mapValues(_.toList.sortBy(_._1))
+    val APPartitions = APFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 10)
 
     val APPatterns = APPartitions.map(line => {
       val pairs = line._2
@@ -400,17 +393,9 @@ object Model {
 //    APPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/testModel/ap")
 
 
-//    APPatterns.collect().foreach(x => {
-//      x.foreach(x => {
-//        println(x._1)
-//        x._2.foreach(v => println(transTimeToString(v._2._1) + ',' + v._2._2 + ',' + transTimeToString(v._2._4) + ',' + v._2._5))
-//      })
-//      println()
-//    })
-
 
     // 轨迹筛选与匹配
-    val mergeData = APPatterns.filter(_._5.size > 5).flatMap(ap => {
+    val mergeData = APPatterns.filter(_._5.size > 3).flatMap(ap => {
       val floatingDays = 0
       val start = ap._5.size - floatingDays
       val candidateDays = AFCData.value.keys.toSet.filter(x => x >= start)
@@ -420,9 +405,11 @@ object Model {
     }).filter(x => x._1._5.intersect(x._2._5).size > 2)
 
     val matchData = mergeData.map(line => {
-      var score = 0f
+      var score = 0d
       val ap = line._1._2.sortBy(_._1._1)
       val afc = line._2._2.sortBy(_._1)
+      val ap_patterns = line._1._3
+      val afc_patterns = line._2._3
       val tr_ap_afc = new ArrayBuffer[(Int, Int)]()
       val tr_ap = new ArrayBuffer[Int]()
       val tr_afc = new ArrayBuffer[Int]()
@@ -473,10 +460,49 @@ object Model {
       }
 
       // 分为三类完毕,开始计算相似度
-
-
+      var score_tr1 = 0d
+      var score_tr2 = 0d
+      var score_tr3 = 0d
+      val n = 0.1
+      if (tr_ap_afc.nonEmpty) {
+        val prepare = new ArrayBuffer[((String, String),((Long, Long), (Long, Long)))]()
+        for (pair <- tr_ap_afc) {
+          val ap_pair = ap(pair._1)._1
+          val afc_pair = afc(pair._2)
+          val afc_od = (afc_pair._2, afc_pair._4)
+          prepare.append((afc_od, ((ap_pair._1, ap_pair._4), (afc_pair._1, afc_pair._3))))
+        }
+        val groupByPattern = prepare.groupBy(_._1).mapValues(line => {
+          val data = line.sortBy(_._2._2._1)
+          var tempScore = 0d
+          for (i <- data.indices) {
+            val v = data(i)._2
+            val ap_length = abs(v._1._2 - v._1._1).toDouble
+            val afc_length = abs(v._2._2 - v._2._1).toDouble
+            tempScore += (ap_length / afc_length) / exp(n * i)
+          }
+          tempScore
+        })
+        groupByPattern.foreach(x => score_tr1 += x._2)
+      }
+      if (tr_ap.nonEmpty)
+        score_tr2 = tr_ap.length
+      if (tr_afc.nonEmpty)
+        score_tr3 = tr_afc.length
+      val x1 = 2
+      val x2 = 0.1
+      val x3 = 0.1
+      if (tr_afc.nonEmpty && tr_ap.nonEmpty && tr_ap_afc.nonEmpty)
+        score = (x1 * score_tr1 + x2 * score_tr2 + x3 * score_tr3) / (tr_ap_afc.length + tr_ap.length + tr_afc.length)
+      (line._2._1, (line._1._1, score_tr1))
     })
 
+    val matchResult = matchData.groupByKey().map(line => {
+      val mostMatchList = line._2.toList.sortBy(_._2).takeRight(3)
+      (line._1, mostMatchList.last, mostMatchList(1), mostMatchList.head)
+    })
+
+    matchResult.repartition(1).sortBy(_._2._2, ascending = false).saveAsTextFile(args(0) + "/liutao/UI/testModel/matchResult_21")
 
 
 //    println("---------------:" + AFCPatterns.count())
@@ -506,7 +532,7 @@ object Model {
       else
         dist_dens_pos.append((dist_r(i), dens_pos(i)._1, dens_pos(i)._2))
     }
-    var sum_dist = 0l
+    var sum_dist = 0L
     var sum_dens = 0d
     dist_dens_pos.foreach(x => {
       sum_dist += x._1
