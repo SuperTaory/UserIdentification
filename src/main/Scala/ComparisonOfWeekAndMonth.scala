@@ -31,11 +31,11 @@ object ComparisonOfWeekAndMonth {
       val sou = stationNoToName.value(fields(0).toInt)
       val des = stationNoToName.value(fields(fields.length-1).toInt)
       val pathStations = new ListBuffer[String]
+      // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
       fields.foreach(x => pathStations.append(stationNoToName.value(x.toInt)))
       ((sou, des), pathStations.toList)
     }).groupByKey().mapValues(_.toList).cache()
-
-    // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
+    // 共享为广播变量
     val perODMap = sc.broadcast(validPathFile.collect().toMap)
 
     // 将OD之间的有效路径涵盖的站点处理为Set集合，OD-pair作为键
@@ -92,8 +92,8 @@ object ComparisonOfWeekAndMonth {
 
 
     // 按照（smartcardID,week）分组，然后再按周分组
-    val groupByWeeks = selectedRDD.groupByKey().mapValues(_.toList.sortBy(_._1)).map(x => (x._1._2, (x._1._1, x._2))).
-      groupByKey().mapValues(_.toList)
+    val groupByWeeks = selectedRDD.groupByKey().mapValues(_.toList.sortBy(_._1)).map(x => (x._1._2, (x._1._1, x._2)))
+      .groupByKey().mapValues(_.toList)
 
     // 共享为广播变量
     val broadcastODInfo = sc.broadcast(groupByWeeks.collect().toMap)
@@ -110,11 +110,12 @@ object ComparisonOfWeekAndMonth {
       ((macId, weeks), (time, station))
     })
 
+    // 按周分组
     val groupedMacInfo = macFile.groupByKey().mapValues(_.toList.sortBy(_._1)).map(x => (x._1._2, (x._1._1, x._2)))
 
-    // 通过广播变量和flatmap结合替代shuffle过程，避免OOM
-    // 生成每一个smartcardID和macID的每周数据的配对
-    val flatenODAndMac = groupedMacInfo.flatMap(line => {
+    // 通过广播变量和flatMap结合替代shuffle过程，避免OOM
+    // 生成每一个AFC和AP的每周数据的配对
+    val flatODAndMac = groupedMacInfo.flatMap(line => {
       val ODInfo = broadcastODInfo.value
       val ODWeekInfo = ODInfo(line._1)
       for (l <- ODWeekInfo) yield{
@@ -124,7 +125,7 @@ object ComparisonOfWeekAndMonth {
 
 
     // 过滤掉与OD冲突的数据
-    val joinedMacAndOD = flatenODAndMac.filter(line => {
+    val joinedMacAndOD = flatODAndMac.filter(line => {
       val macArray = line._2._2._2
       val ODArray = line._2._1._2
       var flag = true
