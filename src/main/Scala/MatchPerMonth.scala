@@ -1,6 +1,8 @@
 import java.text.SimpleDateFormat
 import java.util.{Calendar, TimeZone}
 
+import GeneralFunctionSets.transTimeToTimestamp
+import GeneralFunctionSets.dayOfMonth_long
 import org.apache.spark.{SparkConf, SparkContext}
 
 import scala.collection.mutable
@@ -13,7 +15,7 @@ object MatchPerMonth {
     val sc = new SparkContext(conf)
 
     // 读取地铁站点名和编号映射关系
-    val stationFile = sc.textFile(args(0))
+    val stationFile = sc.textFile(args(0) + "/liutao/AllInfo/stationInfo-UTF-8.txt")
     val stationNoToNameRDD = stationFile.map(line => {
       val stationNo = line.split(',')(0)
       val stationName = line.split(',')(1)
@@ -22,7 +24,7 @@ object MatchPerMonth {
     val stationNoToName = sc.broadcast(stationNoToNameRDD.collect().toMap)
 
     // 读取所有有效路径的数据
-    val validPathFile = sc.textFile(args(1)).map(line => {
+    val validPathFile = sc.textFile(args(0) + "/liutao/AllInfo/allpath.txt").map(line => {
       // 仅保留站点编号信息
       val fields = line.split(' ').dropRight(5)
       val sou = stationNoToName.value(fields(0).toInt)
@@ -55,7 +57,7 @@ object MatchPerMonth {
 
 
     // 读取最短路径的时间信息
-    val shortestPath = sc.textFile(args(2)).map(line => {
+    val shortestPath = sc.textFile(args(0) + "/liutao/AllInfo/shortpath.txt").map(line => {
       val fields = line.split(' ')
       val sou = stationNoToName.value(fields(0).toInt)
       val des = stationNoToName.value(fields(1).toInt)
@@ -63,11 +65,11 @@ object MatchPerMonth {
       val time = (fields(2).toFloat * 60).toLong
       ((sou, des), time)
     })
-
     // 转换成map便于查询
     val shortestPathTime = sc.broadcast(shortestPath.collect().toMap)
+
     // 读取乘客的OD记录
-    val personalOD = sc.textFile(args(3)).map(line => {
+    val personalOD = sc.textFile(args(1)).map(line => {
       val fields = line.split(',')
       val pid = fields(0).drop(1)
       val time = transTimeFormat(fields(1))
@@ -77,10 +79,11 @@ object MatchPerMonth {
     }).cache()
 
     // 挑选OD记录最多的部分ID
-    val countRDD = personalOD.map(x => (x._1, 1)).reduceByKey(_ + _).sortBy(_._2, ascending = false).take(200)
-    val countRDDSet = countRDD.map(_._1).toSet
+//    val countRDD = personalOD.map(x => (x._1, 1)).reduceByKey(_ + _).sortBy(_._2, ascending = false)
+    val countRDD = personalOD.map(x => (x._1, dayOfMonth_long(x._2._1))).groupByKey().mapValues(_.toSet.size).filter(x => x._2 > 20 && x._2 <= 25)
+    val countRDDSet = sc.broadcast(countRDD.map(x => x._1).collect().toSet)
     // 过滤出这部分ID的OD数据
-    val AFCData = personalOD.filter(x => countRDDSet.contains(x._1)).groupByKey().mapValues(_.toList.sortBy(_._1))
+    val AFCData = personalOD.filter(x => countRDDSet.value.contains(x._1)).groupByKey().mapValues(_.toList.sortBy(_._1))
 
     // 共享为广播变量
     val broadcastAFCData = sc.broadcast(AFCData.collect())
@@ -88,14 +91,14 @@ object MatchPerMonth {
     /*----------------------------------------------------------------------------------------------------------------*/
 
     // 读取mac数据
-    val macFile = sc.textFile(args(4)).map( line => {
+    val macFile = sc.textFile(args(2)).map( line => {
       val fields = line.split(',')
       val macId = fields(0).drop(1)
-      val time = fields(1).toLong
-      val station = fields(2).dropRight(1)
+      val time = transTimeToTimestamp(fields(1))
+      val station = fields(2)
       (macId, (time, station))
     })
-    val APData = macFile.groupByKey().mapValues(_.toList.sortBy(_._1))
+    val APData = macFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 20)
 
     /*----------------------------------------------------------------------------------------------------------------*/
     // 将AFC数据和AP数据融合
@@ -169,13 +172,15 @@ object MatchPerMonth {
       }
       // 生成每对AFC记录和AP记录的每月相似度
       (ODId, (macId, score.formatted("%.3f").toFloat))
-    }).filter(_._2._2 > 10).groupByKey().mapValues(_.toList.sortBy(_._2).reverse.take(3))
+    }).filter(_._2._2 > 10).groupByKey().mapValues(_.toList.sortBy(_._2).reverse.take(2))
 
 
-    matchProcessing.flatMap(line => {
+    val result = matchProcessing.flatMap(line => {
       for (v <- line._2) yield
         (line._1, v._1, v._2)
-    }).repartition(1).saveAsTextFile(args(5))
+    }).repartition(1)
+
+    result.saveAsTextFile(args(3))
 
     sc.stop()
   }

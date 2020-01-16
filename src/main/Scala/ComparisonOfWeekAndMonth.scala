@@ -7,6 +7,7 @@ import org.apache.spark.util.LongAccumulator
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.math.{abs, max}
+import GeneralFunctionSets.transTimeToTimestamp
 
 // 从AFC中选取部分数据和全部AP数据匹配
 object ComparisonOfWeekAndMonth {
@@ -15,7 +16,7 @@ object ComparisonOfWeekAndMonth {
     val sc = new SparkContext(conf)
 
     // 读取地铁站点名和编号映射关系
-    val stationFile = sc.textFile(args(0))
+    val stationFile = sc.textFile(args(0) + "/liutao/AllInfo/stationInfo-UTF-8.txt")
     val stationNoToNameRDD = stationFile.map(line => {
       val stationNo = line.split(',')(0)
       val stationName = line.split(',')(1)
@@ -25,7 +26,7 @@ object ComparisonOfWeekAndMonth {
 
 
     // 读取所有有效路径的数据
-    val validPathFile = sc.textFile(args(1)).map(line => {
+    val validPathFile = sc.textFile(args(0) + "/liutao/AllInfo/allpath.txt").map(line => {
       // 仅保留站点编号信息
       val fields = line.split(' ').dropRight(5)
       val sou = stationNoToName.value(fields(0).toInt)
@@ -58,7 +59,7 @@ object ComparisonOfWeekAndMonth {
 
 
     // 读取最短路径的时间信息
-    val shortestPath = sc.textFile(args(2)).map(line => {
+    val shortestPath = sc.textFile(args(0) + "/liutao/AllInfo/shortpath.txt").map(line => {
       val fields = line.split(' ')
       val sou = stationNoToName.value(fields(0).toInt)
       val des = stationNoToName.value(fields(1).toInt)
@@ -71,7 +72,7 @@ object ComparisonOfWeekAndMonth {
     val shortestPathTime = sc.broadcast(shortestPath.collect().toMap)
 
     // 读取乘客的OD记录
-    val personalOD = sc.textFile(args(3)).map(line => {
+    val personalOD = sc.textFile(args(1)).map(line => {
       val fields = line.split(',')
       val pid = fields(0).drop(1)
       val time = transTimeFormat(fields(1))
@@ -82,13 +83,16 @@ object ComparisonOfWeekAndMonth {
     }).cache()
 
     // 挑选OD记录最多的部分smartcardID
-    val countRDD = personalOD.map(x => (x._1._1, 1)).reduceByKey(_ + _).sortBy(_._2, ascending = false).take(200)
+    val countRDD = personalOD.map(x => (x._1._1, 1)).reduceByKey(_ + _).sortBy(_._2,ascending = false)
 
-    val countRDDSet = countRDD.map(_._1).toSet
-//    val countRDDSet = Set("666610936", "666601255", "666593275", "666584679", "666571239", "666569535", "666569379", "666565391", "666564783", "666556246")
+//    println("----------")
+//    println("----------------------------------" + countRDD.count())
+//    println("---------------------")
+
+    val countRDDSet = sc.broadcast(countRDD.take(200).map(x => x._1).toSet)
 
     // 过滤出这部分smartcardID的OD数据
-    val selectedRDD = personalOD.filter(x => countRDDSet.contains(x._1._1))
+    val selectedRDD = personalOD.filter(x => countRDDSet.value.contains(x._1._1))
 
 
     // 按照（smartcardID,week）分组，然后再按周分组
@@ -101,11 +105,11 @@ object ComparisonOfWeekAndMonth {
     /*----------------------------------------------------------------------------------------------------------------*/
 
     // 读取mac数据
-    val macFile = sc.textFile(args(4)).map( line => {
+    val macFile = sc.textFile(args(2)).map( line => {
       val fields = line.split(',')
       val macId = fields(0).drop(1)
-      val time = fields(1).toLong
-      val station = fields(2).dropRight(1)
+      val time = transTimeToTimestamp(fields(1))
+      val station = fields(2)
       val weeks = getWeek(time)
       ((macId, weeks), (time, station))
     })
@@ -124,29 +128,29 @@ object ComparisonOfWeekAndMonth {
     })
 
 
-    // 过滤掉与OD冲突的数据
-    val joinedMacAndOD = flatODAndMac.filter(line => {
-      val macArray = line._2._2._2
-      val ODArray = line._2._1._2
-      var flag = true
-      for (a <- ODArray if flag){
-        val l = macArray.indexWhere(_._1 >= a._1 - 60)
-        val r = macArray.lastIndexWhere(_._1 <= a._1 + 60)
-        if (l != -1 && r != -1){
-          for (i <- l.to(r) if flag){
-            if (macArray(i)._2 == a._2)
-              flag = true
-            else
-              flag = false
-          }
-        }
-      }
-      flag
-    })
+//    // 过滤掉与OD冲突的数据
+//    val joinedMacAndOD = flatODAndMac.filter(line => {
+//      val macArray = line._2._2._2
+//      val ODArray = line._2._1._2
+//      var flag = true
+//      for (a <- ODArray if flag){
+//        val l = macArray.indexWhere(_._1 >= a._1 - 60)
+//        val r = macArray.lastIndexWhere(_._1 <= a._1 + 60)
+//        if (l != -1 && r != -1){
+//          for (i <- l.to(r) if flag){
+//            if (macArray(i)._2 == a._2)
+//              flag = true
+//            else
+//              flag = false
+//          }
+//        }
+//      }
+//      flag
+//    })
 
 
 
-    val rankedScoreOfWeek = joinedMacAndOD.map(line => {
+    val rankedScoreOfWeek = flatODAndMac.map(line => {
       var score = 0f
       val weeks = line._1
       val macId = line._2._2._1
@@ -174,11 +178,12 @@ object ComparisonOfWeekAndMonth {
               for (path <- paths) {
                 var path_score = 0f
                 val coincideList = new ListBuffer[Int]
+                // 当所截取的mac出行片段所含站点包含在当前有效路径站点集合中时进行相似度计算
                 if (path.toSet.union(macStationSet).size == path.length){
                   for (station <- path if index_mac <= r) {
                     if (macArray(index_mac)._2.equals(station)) {
                       index_mac += 1
-                      coincideList.append(path.indexWhere(_ == station))
+                      coincideList.append(path.indexOf(station))
                     }
                   }
                   // 判断所截取Mac片段是否有多余未匹配的点,允许一个点的误差
@@ -257,7 +262,7 @@ object ComparisonOfWeekAndMonth {
       (smartCardId, detail)
     }).cache()
 
-    resultRDD.repartition(1).saveAsTextFile(args(5))
+    resultRDD.repartition(1).saveAsTextFile(args(3))
 
     val overlapRDD = resultRDD.filter(_._2.split(',').last == "C").map(_._1).collect()
     overlapRDD.foreach(println)

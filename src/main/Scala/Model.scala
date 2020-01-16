@@ -6,7 +6,7 @@ import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.math.{Pi, abs, exp, min, pow, sqrt}
 
 /**
- * User unique identification
+ * User identification
  */
 object Model {
 
@@ -15,7 +15,7 @@ object Model {
   def main(args: Array[String]): Unit = {
     val spark = SparkSession
       .builder()
-      .appName("OD Distribution")
+      .appName("Matching Model")
       .getOrCreate()
     val sc = spark.sparkContext
 
@@ -68,22 +68,28 @@ object Model {
       (id, (ot, os, dt, ds, day))
     })
 
-    // 划分AFC,仅保留出行次数大于10次的数据
-    val AFCPartitions = AFCFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 10)
+    // 划分AFC,仅保留出行天数大于5天的数据
+    val AFCPartitions = AFCFile.groupByKey().map(line => {
+      val dataArray = line._2.toList.sortBy(_._1)
+      val daySets : mutable.Set[Int] = mutable.Set()
+      dataArray.foreach(x => daySets.add(x._5))
+      (line._1, dataArray, daySets)
+    }).filter(_._3.size > 5)
+//    val AFCPartitions = AFCFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 10)
+
 
     // AFC模式提取-基于核密度估计的聚类
     val AFCPatterns = AFCPartitions.map(line => {
       val pairs = line._2
-      // 计算出行天数
-      val daySets : mutable.Set[Int] = mutable.Set()
-      pairs.foreach(x => daySets.add(x._5))
+      val daySets = line._3
 
-      // 统计主要站点-依照出现次数
+      // 统计主要站点-进出站出现次数最多的站点
       val stationCount = new ArrayBuffer[String]()
       pairs.foreach(x => {
         stationCount.append(x._2)
         stationCount.append(x._4)
       })
+      // 控制保存主要站点的个数
       val Q = 2
       val topStations = stationCount.groupBy(x => x)
         .mapValues(_.size)
@@ -146,7 +152,7 @@ object Model {
           clusters.append((0,v))
       }
       // 按照所属类别分组
-      val grouped = clusters.groupBy(_._1).toArray.filter(x => x._1 > 0 && x._2.length > 5)
+      val grouped = clusters.groupBy(_._1).toArray.filter(x => x._1 > 0)
       // 存储出行模式集合
       val afc_patterns = new ArrayBuffer[(Int, (String, String))]()
       if (grouped.nonEmpty){
@@ -155,7 +161,7 @@ object Model {
           val temp_data = g._2.toArray.groupBy(x => (x._2._2, x._2._4))
           temp_data.foreach(v => {
             // 超过总出行天数的1/2则视为出行模式
-            if ( daySets.size >= 5 && v._2.length >= daySets.size / 2) {
+            if ( v._2.length >= 5 || v._2.length > daySets.size / 2) {
               afc_patterns.append((g._1, v._1))
             }
           })
@@ -164,14 +170,16 @@ object Model {
 
       // id、出行片段集合、出行模式集合、主要站点集合、出行日期集合
       (daySets.size, (line._1, pairs, afc_patterns.toList, topStations.toList, daySets))
-    }).filter(_._1 >= 5)
+    })
 
 
     val AFCData = sc.broadcast(AFCPatterns.groupByKey().mapValues(_.toList).collect().toMap)
 
 //    AFCPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/testModel/afc")
 
-
+/**
+ * *************************分割线********************
+ */
 
     // 读取AP数据:(000000000000,2019-06-01 10:38:05,布吉,0,2019-06-01 10:43:50,上水径,15)
     val APFile = sc.textFile(args(0) + "/liutao/UI/SampledAPData_n/part*").map(line => {
