@@ -68,6 +68,7 @@ object Model {
       (id, (ot, os, dt, ds, day))
     })
 
+
     // 划分AFC,仅保留出行天数大于5天的数据
     val AFCPartitions = AFCFile.groupByKey().map(line => {
       val dataArray = line._2.toList.sortBy(_._1)
@@ -199,14 +200,17 @@ object Model {
     })
 
     // 划分AP
-    val APPartitions = APFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 10)
+    val APPartitions = APFile.groupByKey().map(line => {
+      val dataArray = line._2.toList.sortBy(_._1)
+      // 统计出行天数
+      val daySets : mutable.Set[Int] = mutable.Set()
+      dataArray.foreach(x => daySets.add(x._7))
+      (line._1, dataArray, daySets)
+    }).filter(_._3.size > 5)
 
     val APPatterns = APPartitions.map(line => {
       val pairs = line._2
-
-      // 统计出行天数
-      val daySets : mutable.Set[Int] = mutable.Set()
-      pairs.foreach(x => daySets.add(x._7))
+      val daySets = line._3
 
       // 统计主要站点-依照停留时间
       val stationCount = new ArrayBuffer[(String, Int)]()
@@ -397,13 +401,13 @@ object Model {
       }
 
       (line._1, complement.toList, ap_patterns.toList, topStations.toList, daySets)
-    }).cache()
+    })
 //    APPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/testModel/ap")
 
 
 
     // 轨迹筛选与匹配
-    val mergeData = APPatterns.filter(_._5.size > 3).flatMap(ap => {
+    val mergeData = APPatterns.flatMap(ap => {
       val floatingDays = 0
       val start = ap._5.size - floatingDays
       val candidateDays = AFCData.value.keys.toSet.filter(x => x >= start)

@@ -80,7 +80,7 @@ object MatchPerMonth {
 
     // 挑选OD记录最多的部分ID
 //    val countRDD = personalOD.map(x => (x._1, 1)).reduceByKey(_ + _).sortBy(_._2, ascending = false)
-    val countRDD = personalOD.map(x => (x._1, dayOfMonth_long(x._2._1))).groupByKey().mapValues(_.toSet.size).filter(x => x._2 > 20 && x._2 <= 25)
+    val countRDD = personalOD.map(x => (x._1, dayOfMonth_long(x._2._1))).groupByKey().mapValues(_.toSet.size).filter(x => x._2 > 5 && x._2 <= 10)
     val countRDDSet = sc.broadcast(countRDD.map(x => x._1).collect().toSet)
     // 过滤出这部分ID的OD数据
     val AFCData = personalOD.filter(x => countRDDSet.value.contains(x._1)).groupByKey().mapValues(_.toList.sortBy(_._1))
