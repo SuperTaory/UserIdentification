@@ -17,7 +17,7 @@ object Model {
       .builder()
       .appName("Matching Model")
       .getOrCreate()
-    val sc = spark.sparkContext
+      val sc = spark.sparkContext
 
     // 读取地铁站点名和编号映射关系
     val stationFile = sc.textFile(args(0) + "/liutao/AllInfo/stationInfo-UTF-8.txt")
@@ -53,15 +53,27 @@ object Model {
     })
     val ODIntervalMap = sc.broadcast(readODTimeInterval.collect().toMap)
 
+    // 读取groundTruth计算Accuracy
+    // (251449740,ECA9FAE07B4F,26.857,43,0.6245814)
+    val groundTruthData = sc.textFile(args(0) + "/liutao/UI/GroundTruth/IdMap/part-*").map(line => {
+      val fields = line.split(",")
+      val afcId = fields(0).drop(1)
+      val apId = fields(1)
+      (apId, afcId)
+    })
+    val groundTruthMap = sc.broadcast(groundTruthData.collect().toMap)
+
     // Pre-processing
-    // 读取AFC数据: (020798332,2019-06-24 10:06:50,碧海湾,2019-06-24 10:25:09,桥头)
-    val AFCFile = sc.textFile(args(0) + "/liutao/UI/SampledAFCData/part-00021").map(line => {
+    // 读取AFC数据: (669404508,2019-06-01 09:21:28,世界之窗,21,2019-06-01 09:31:35,深大,22)
+    // 所有afc数据路径：/Destin/subway-pair/part-*
+    // ground truth数据路径：/liutao/UI/GroundTruth/afcData/part-*
+    val AFCFile = sc.textFile(args(0) + "/Destin/subway-pair/part-*").map(line => {
       val fields = line.split(',')
       val id = fields(0).drop(1)
       val ot = transTimeToTimestamp(fields(1))
       val os = fields(2)
-      val dt = transTimeToTimestamp(fields(3))
-      val ds = fields.last.dropRight(1)
+      val dt = transTimeToTimestamp(fields(4))
+      val ds = fields(5)
       val o_day = dayOfMonth_long(ot)
       val d_day = dayOfMonth_long(dt)
       val day = if (o_day == d_day) o_day else 0
@@ -72,11 +84,10 @@ object Model {
     // 划分AFC,仅保留出行天数大于5天的数据
     val AFCPartitions = AFCFile.groupByKey().map(line => {
       val dataArray = line._2.toList.sortBy(_._1)
-      val daySets : mutable.Set[Int] = mutable.Set()
-      dataArray.foreach(x => daySets.add(x._5))
+      val daySets = dataArray.map(_._5).toSet
       (line._1, dataArray, daySets)
     }).filter(_._3.size > 5)
-//    val AFCPartitions = AFCFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 10)
+    //    val AFCPartitions = AFCFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 10)
 
 
     // AFC模式提取-基于核密度估计的聚类
@@ -91,8 +102,9 @@ object Model {
         stationCount.append(x._4)
       })
       // 控制保存主要站点的个数
-      val Q = 2
-      val topStations = stationCount.groupBy(x => x)
+      val Q = 3
+      val topStations = stationCount
+        .groupBy(x => x)
         .mapValues(_.size)
         .toArray
         .sortBy(_._2)
@@ -121,8 +133,8 @@ object Model {
 
       // 判断是否存在聚类中心，若返回为空则不存在，否则分类
       val cluster_center = z_score(density_stamp)
-//      cluster_center.foreach(x => println(x._1.toString + '\t' + (x._2/3600).toString + ":" + (x._2%3600/60).toString + ":" + (x._2%3600%60).toString))
-//      println("DaySets:" + daySets.toArray.sorted.mkString(","))
+      //      cluster_center.foreach(x => println(x._1.toString + '\t' + (x._2/3600).toString + ":" + (x._2%3600/60).toString + ":" + (x._2%3600%60).toString))
+      //      println("DaySets:" + daySets.toArray.sorted.mkString(","))
 
       // 设置类边界距离并按照聚类中心分配数据
       val dc = 5400
@@ -155,7 +167,11 @@ object Model {
       // 按照所属类别分组
       val grouped = clusters.groupBy(_._1).toArray.filter(x => x._1 > 0)
       // 存储出行模式集合
-      val afc_patterns = new ArrayBuffer[(Int, (String, String))]()
+      val afc_patterns = new ArrayBuffer[(String, String)]()
+      pairs.groupBy(x => (x._2, x._4)).foreach(g => {
+        if (g._2.length > pairs.length / 3)
+          afc_patterns.append(g._1)
+      })
       if (grouped.nonEmpty){
         grouped.foreach(g => {
           // 同一类中数据按照进出站分组
@@ -163,27 +179,27 @@ object Model {
           temp_data.foreach(v => {
             // 超过总出行天数的1/2则视为出行模式
             if ( v._2.length >= 5 || v._2.length > daySets.size / 2) {
-              afc_patterns.append((g._1, v._1))
+              afc_patterns.append(v._1)
             }
           })
         })
       }
 
       // id、出行片段集合、出行模式集合、主要站点集合、出行日期集合
-      (daySets.size, (line._1, pairs, afc_patterns.toList, topStations.toList, daySets))
+      (line._1, pairs, afc_patterns.toSet, topStations.toList, daySets)
     })
 
 
-    val AFCData = sc.broadcast(AFCPatterns.groupByKey().mapValues(_.toList).collect().toMap)
+//    val AFCData = sc.broadcast(AFCPatterns.groupByKey().mapValues(_.toList).collect().toMap)
 
-//    AFCPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/testModel/afc")
+//    AFCPatterns.repartition(10).saveAsTextFile(args(0) + "/liutao/UI/Model/afc")
 
 /**
  * *************************分割线********************
  */
 
     // 读取AP数据:(000000000000,2019-06-01 10:38:05,布吉,0,2019-06-01 10:43:50,上水径,15)
-    val APFile = sc.textFile(args(0) + "/liutao/UI/SampledAPData_n/part*").map(line => {
+    val APFile = sc.textFile(args(0) + "/liutao/UI/GroundTruth/completedApData/part-*").map(line => {
       val fields = line.split(",")
       val id = fields(0).drop(1)
       val ot = transTimeToTimestamp(fields(1))
@@ -203,8 +219,8 @@ object Model {
     val APPartitions = APFile.groupByKey().map(line => {
       val dataArray = line._2.toList.sortBy(_._1)
       // 统计出行天数
-      val daySets : mutable.Set[Int] = mutable.Set()
-      dataArray.foreach(x => daySets.add(x._7))
+      val daySets = dataArray.map(_._7).toSet
+      //      dataArray.foreach(x => daySets.add(x._7))
       (line._1, dataArray, daySets)
     }).filter(_._3.size > 5)
 
@@ -213,17 +229,18 @@ object Model {
       val daySets = line._3
 
       // 统计主要站点-依照停留时间
-      val stationCount = new ArrayBuffer[(String, Int)]()
+      val stationCount = new ArrayBuffer[String]()
       pairs.foreach(x => {
-        stationCount.append((x._2, x._3))
-        stationCount.append((x._5, x._6))
+        stationCount.append(x._2)
+        stationCount.append(x._5)
       })
-      val Q = 2
-      val topStations = stationCount.groupBy(x => x._1).mapValues(v => {
-        var sum = 0
-        v.foreach(x => sum += x._2)
-        sum
-      }).toArray.sortBy(_._2).takeRight(Q).map(_._1)
+      val Q = 3
+      val topStations = stationCount
+        .groupBy(x => x)
+        .mapValues(_.size)
+        .toArray.sortBy(_._2)
+        .takeRight(Q)
+        .map(_._1)
 
       // 提取时间戳对应当天的秒数用于聚类
       val stampBuffer = new ArrayBuffer[Long]()
@@ -247,8 +264,8 @@ object Model {
 
       // 聚类中心，若返回为空则不存在，否则分类
       val cluster_center = z_score(density_stamp)
-//      cluster_center.foreach(x => println(x._1.toString + '\t' + (x._2/3600).toString + ":" + (x._2%3600/60).toString + ":" + (x._2%3600%60).toString))
-//      println("DaySets:" + daySets.toArray.sorted.mkString(","))
+      //      cluster_center.foreach(x => println(x._1.toString + '\t' + (x._2/3600).toString + ":" + (x._2%3600/60).toString + ":" + (x._2%3600%60).toString))
+      //      println("DaySets:" + daySets.toArray.sorted.mkString(","))
 
       // 设置类边界距离
       val dc = 5400
@@ -348,7 +365,7 @@ object Model {
 
       // AP补全
       val complement = new ArrayBuffer[((Long, String, Int, Long, String, Int, Int), Int)]()
-      if (ap_patterns.isEmpty) {
+      if (true) {
         pairs.foreach(v => complement.append((v,0)))
       }
       else {
@@ -400,28 +417,38 @@ object Model {
         })
       }
 
-      (line._1, complement.toList, ap_patterns.toList, topStations.toList, daySets)
+      (daySets.size, (line._1, complement.toList, ap_patterns.toSet, topStations.toList, daySets))
     })
-//    APPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/testModel/ap")
+    //    APPatterns.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/Model/ap")
+
+    val APData = sc.broadcast(APPatterns.groupByKey().mapValues(_.toList).collect().toMap)
 
 
-
-    // 轨迹筛选与匹配
-    val mergeData = APPatterns.flatMap(ap => {
-      val floatingDays = 0
-      val start = ap._5.size - floatingDays
-      val candidateDays = AFCData.value.keys.toSet.filter(x => x >= start)
-      for (i <- candidateDays; afc <- AFCData.value(i)) yield{
+    // 将AP和AFC数据按照天数结合
+    val mergeData = AFCPatterns.flatMap(afc => {
+      val floatingDays = 3
+      val start = afc._5.size + floatingDays
+      val candidateDays = APData.value.keys.toSet.filter(x => x <= start)
+      for (i <- candidateDays; ap <- APData.value(i)) yield  {
         (ap, afc)
       }
-    }).filter(x => x._1._5.intersect(x._2._5).size > 2)
+    }).filter(line => {
+      var flag = true
+      if (line._1._4.nonEmpty && line._2._4.nonEmpty){
+        if (line._1._4.toSet.intersect(line._2._4.toSet).nonEmpty)
+          flag = true
+        else
+          flag = false
+      }
+      flag
+    })
 
+//    val allRes = new ListBuffer[(Float, Float, Float, Float)]
+
+//    for (i <- 10.to(100, 10)) {
     val matchData = mergeData.map(line => {
-      var score = 0d
       val ap = line._1._2.sortBy(_._1._1)
       val afc = line._2._2.sortBy(_._1)
-      val ap_patterns = line._1._3
-      val afc_patterns = line._2._3
       val tr_ap_afc = new ArrayBuffer[(Int, Int)]()
       val tr_ap = new ArrayBuffer[Int]()
       val tr_afc = new ArrayBuffer[Int]()
@@ -438,51 +465,42 @@ object Model {
           tr_afc.append(index_afc)
           index_afc += 1
         }
-        else if (cur_ap._1 > cur_afc._1 - 300 && cur_ap._4 < cur_afc._3 + 300){
+        else if (cur_ap._1 > cur_afc._1 - 600 && cur_ap._4 < cur_afc._3 + 600) {
           val paths = validPathMap.value((cur_afc._2, cur_afc._4))
           var flag = true
           for (p <- paths if flag) {
             if (p.indexOf(cur_ap._2) >= 0 && p.indexOf(cur_ap._5) > p.indexOf(cur_ap._2)) {
-              if (abs(cur_afc._1 + ODIntervalMap.value(p.head, cur_ap._2) - cur_ap._1) < 300) {
-                if (abs(cur_ap._4 + ODIntervalMap.value(cur_ap._5, p.last) - cur_afc._3) < 300) {
+              if (abs(cur_afc._1 + ODIntervalMap.value(p.head, cur_ap._2) - cur_ap._1) < 600) {
+                if (abs(cur_ap._4 + ODIntervalMap.value(cur_ap._5, p.last) - cur_afc._3) < 600) {
                   flag = false
                   tr_ap_afc.append((index_ap, index_afc))
-                  index_afc += 1
-                  index_ap += 1
                 }
               }
             }
           }
-          if (flag) {
-            // 跳出while循环
-            index_afc = afc.length
-            index_ap = ap.length
-            tr_ap.clear()
-            tr_afc.clear()
-            tr_ap_afc.clear()
-          }
+          index_afc += 1
+          index_ap += 1
         }
         else {
-          index_afc = afc.length
-          index_ap = ap.length
-          tr_ap.clear()
-          tr_afc.clear()
-          tr_ap_afc.clear()
+          index_afc += 1
+          index_ap += 1
         }
       }
 
       // 分为三类完毕,开始计算相似度
       var score_tr1 = 0d
-      var score_tr2 = 0d
-      var score_tr3 = 0d
-      val n = 0.1
+      var cost_tr1 = 0L
+      var cost_tr2 = 0L
+      var cost_tr3 = 0L
+      val n = 0.02
+      val prepare = new ArrayBuffer[((String, String), ((Long, Long), (Long, Long)))]()
       if (tr_ap_afc.nonEmpty) {
-        val prepare = new ArrayBuffer[((String, String),((Long, Long), (Long, Long)))]()
         for (pair <- tr_ap_afc) {
           val ap_pair = ap(pair._1)._1
           val afc_pair = afc(pair._2)
           val afc_od = (afc_pair._2, afc_pair._4)
           prepare.append((afc_od, ((ap_pair._1, ap_pair._4), (afc_pair._1, afc_pair._3))))
+          cost_tr1 += (afc_pair._3 - afc_pair._1)
         }
         val groupByPattern = prepare.groupBy(_._1).mapValues(line => {
           val data = line.sortBy(_._2._2._1)
@@ -491,35 +509,65 @@ object Model {
             val v = data(i)._2
             val ap_length = abs(v._1._2 - v._1._1).toDouble
             val afc_length = abs(v._2._2 - v._2._1).toDouble
-            tempScore += (ap_length / afc_length) / exp(n * i)
+            tempScore += min(ap_length, afc_length)
           }
           tempScore
         })
         groupByPattern.foreach(x => score_tr1 += x._2)
       }
-      if (tr_ap.nonEmpty)
-        score_tr2 = tr_ap.length
       if (tr_afc.nonEmpty)
-        score_tr3 = tr_afc.length
-      val x1 = 2
-      val x2 = 0.1
-      val x3 = 0.1
-      if (tr_afc.nonEmpty && tr_ap.nonEmpty && tr_ap_afc.nonEmpty)
-        score = (x1 * score_tr1 + x2 * score_tr2 + x3 * score_tr3) / (tr_ap_afc.length + tr_ap.length + tr_afc.length)
-      (line._2._1, (line._1._1, score_tr1))
+        tr_afc.foreach(x => cost_tr2 += (afc(x)._3 - afc(x)._1))
+      if (tr_ap.nonEmpty)
+        tr_ap.foreach(x => cost_tr3 += (ap(x)._1._4 - ap(x)._1._1))
+      (line._1._1, (line._2._1, score_tr1, cost_tr1, cost_tr2, cost_tr3))
+    }).filter(_._2._2 > 0)
+
+
+//  for (x <- 80.until(91, 10)) {
+//    for (i <- 0.until(51, 2)) {
+//      val x1 = i.toFloat / 100
+//      val x2 = (50 - i).toFloat / 100
+//      val x3 = 0.5f
+
+    val matchResult = matchData.map(line => {
+      val x1 = 0.36
+      val x2 = 0.14
+      val x3 = 0.5
+      val score = line._2._2 / (x1 * line._2._3 + x2 * line._2._4 + x3 * line._2._5)
+      (line._1, (line._2._1, score))
+    })
+      .groupByKey().map(line => {
+      val mostMatchList = line._2.toList.sortBy(_._2).takeRight(1)
+      (line._1, mostMatchList.head._1, mostMatchList.head._2)
     })
 
-    val matchResult = matchData.groupByKey().map(line => {
-      val mostMatchList = line._2.toList.sortBy(_._2).takeRight(3)
-      (line._1, mostMatchList.last, mostMatchList(1), mostMatchList.head)
-    })
+      //    matchResult.repartition(1).saveAsTextFile(args(0) + "/liutao/UI/Model/TripNum")
 
-    matchResult.repartition(1).sortBy(_._2._2, ascending = false).saveAsTextFile(args(0) + "/liutao/UI/testModel/matchResult_21")
+      // (688324783,98E7F5E2318C,10.140227867509026)
+      // matchResult.repartition(10).sortBy(x => (x._1, x._2._2), ascending = false).saveAsTextFile(args(0) + "/liutao/UI/Model/detail")
+
+    val result = matchResult.map(line => {
+      var flag = 0
+      if (groundTruthMap.value(line._1).equals(line._2)) {
+        flag = 1
+      }
+      (flag, 1)
+    }).reduceByKey(_+_)
 
 
-//    println("---------------:" + AFCPatterns.count())
-//    println("---------------:" + APPatterns.count())
-//    println("---------------:" + mergeAndMatch.count())
+    val resultMap = result.collect().toMap
+    println(resultMap(1).toFloat / (resultMap(0) + resultMap(1)))
+    print(resultMap)
+
+//      val res = new ListBuffer[(Float, Float)]
+//      res.append((i.toFloat / 1000, resultMap(1).toFloat / (resultMap(0) + resultMap(1))))
+//      sc.makeRDD(res.toList, 1).saveAsTextFile(args(0) + "/liutao/UI/Model/NewRes/p" + i.toString)
+
+//      allRes.append((x1, x2, x3, resultMap(1).toFloat / (resultMap(0) + resultMap(1))))
+//    }
+//    }
+
+//    allRes.toList.foreach(x => println(x))
 
     spark.stop()
   }

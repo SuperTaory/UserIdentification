@@ -35,7 +35,7 @@ object SamplingAPData {
     // 划分为出行片段并标记出行日期
     val partition = macFile.map(line => {
       // 设置出行片段长度阈值
-      val m = 2
+      val m = 1
       val MacId = line._1
       val data = line._2
       val segment = new ListBuffer[(Long, String, Long)]
@@ -55,22 +55,6 @@ object SamplingAPData {
             }
             segment.clear()
           }
-//          // 前后相邻站点相差时间超过阈值进行划分
-//          else if (abs(s._1 - segment.last._1) > ODIntervalMap.value((segment.last._2, s._2)) + 1800) {
-//            if (segment.length > m) {
-//              segments.append(segment.toList)
-//              daySets.add(dayOfMonth_long(segment.head._1))
-//            }
-//            segment.clear()
-//          }
-//          // 前后相邻站点相差时间小于阈值进行划分
-//          else if (abs(s._1 - segment.last._1) < ODIntervalMap.value((segment.last._2, s._2)) * 0.5){
-//            if (segment.length > m) {
-//              segments.append(segment.toList)
-//              daySets.add(dayOfMonth_long(segment.head._1))
-//            }
-//            segment.clear()
-//          }
           else{
             // 设置容忍时间误差
             var attachInterval = 0
@@ -116,31 +100,31 @@ object SamplingAPData {
     // 对出行片段采样
     val samplingOnPartitions = samplingByDay.map(line => {
       val sampledData = new ListBuffer[((Long, String, Long), (Long, String, Long))]
-      for (p <- line._2) {
-        sampledData.append((p.head, p.last))
-      }
-//      for (s <- line._2) {
-//        val tempData = new ListBuffer[((Long, String, Long), Double)]
-//        // 设置随机数种子seed
-//        val r = new Random(System.currentTimeMillis())
-//        var sum = 0F
-//        for (v <- s){
-//          if (v._3 < 30)
-//            sum += 30
-//          else{
-//            sum += v._3
-//          }
-//        }
-//        for (v <- s) {
-//          if (v._3 < 30)
-//            tempData.append((v, pow(r.nextFloat(), sum / 30)))
-//          else {
-//            tempData.append((v, pow(r.nextFloat(), sum / v._3)))
-//          }
-//        }
-//        val temp = tempData.sortBy(_._2).takeRight(2).toList.sortBy(_._1._1)
-//        sampledData.append((temp.head._1, temp.last._1))
+//      for (p <- line._2) {
+//        sampledData.append((p.head, p.last))
 //      }
+      for (s <- line._2) {
+        val tempData = new ListBuffer[((Long, String, Long), Double)]
+        // 设置随机数种子seed
+        val r = new Random(System.currentTimeMillis())
+        var sum = 0F
+        for (v <- s){
+          if (v._3 < 30)
+            sum += 30
+          else{
+            sum += v._3
+          }
+        }
+        for (v <- s) {
+          if (v._3 < 30)
+            tempData.append((v, pow(r.nextFloat(), sum / 30)))
+          else {
+            tempData.append((v, pow(r.nextFloat(), sum / v._3)))
+          }
+        }
+        val temp = tempData.sortBy(_._2).takeRight(2).toList.sortBy(_._1._1)
+        sampledData.append((temp.head._1, temp.last._1))
+      }
       (line._1, sampledData.toList)
     })
 

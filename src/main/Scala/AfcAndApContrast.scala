@@ -38,10 +38,11 @@ object AfcAndApContrast {
     }).cache()
 
     // 统计出行片段的时间长度分布,10s为一个单位
-    val travelTimeLengthAFC = processingAFC.flatMap(line => for (v <- line._2) yield (v / 10, 1))
+    val travelTimeLengthAFC = processingAFC.flatMap(line => for (v <- line._2) yield (v / 120, 1))
       .reduceByKey(_+_)
       .repartition(1)
       .sortByKey()
+      .map(x => x._1.toString + "," + x._2.toString)
     travelTimeLengthAFC.saveAsTextFile(args(1) + "/AFC-TimeLength")
 
     // 统计出行次数分布
@@ -88,10 +89,11 @@ object AfcAndApContrast {
 
 
     // 统计出行片段的时间长度分布
-    val travelTimeLengthAP = processingAP.flatMap(line => for (v <- line._2) yield (v / 10, 1))
+    val travelTimeLengthAP = processingAP.flatMap(line => for (v <- line._2) yield (v / 120, 1))
       .reduceByKey(_+_)
       .repartition(1)
       .sortByKey()
+      .map(x => x._1.toString + "," + x._2.toString)
     travelTimeLengthAP.saveAsTextFile(args(1) + "/AP-TimeLength")
 
     // 统计出行次数分布

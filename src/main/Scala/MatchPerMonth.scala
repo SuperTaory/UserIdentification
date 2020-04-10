@@ -76,14 +76,20 @@ object MatchPerMonth {
       val station = fields(2)
       val tag = fields(3).dropRight(1)
       (pid, (time, station, tag))
-    }).cache()
+    })
 
     // 挑选OD记录最多的部分ID
 //    val countRDD = personalOD.map(x => (x._1, 1)).reduceByKey(_ + _).sortBy(_._2, ascending = false)
-    val countRDD = personalOD.map(x => (x._1, dayOfMonth_long(x._2._1))).groupByKey().mapValues(_.toSet.size).filter(x => x._2 > 5 && x._2 <= 10)
-    val countRDDSet = sc.broadcast(countRDD.map(x => x._1).collect().toSet)
+//    val countRDD = personalOD.map(x => (x._1, dayOfMonth_long(x._2._1))).groupByKey().mapValues(_.toSet.size).filter(x => x._2 > 15 && x._2 <= 20)
+//    val countRDDSet = sc.broadcast(countRDD.map(x => x._1).collect().toSet)
     // 过滤出这部分ID的OD数据
-    val AFCData = personalOD.filter(x => countRDDSet.value.contains(x._1)).groupByKey().mapValues(_.toList.sortBy(_._1))
+//    val AFCData = personalOD.filter(x => countRDDSet.value.contains(x._1)).groupByKey().mapValues(_.toList.sortBy(_._1))
+
+    val AFCData = personalOD.groupByKey().mapValues(v => {
+      val data = v.toList.sortBy(_._1)
+      val daySets = data.map(x => dayOfMonth_long(x._1)).toSet
+      (data, daySets)
+    }).filter(x => x._2._2.size >= 15)
 
     // 共享为广播变量
     val broadcastAFCData = sc.broadcast(AFCData.collect())
@@ -98,7 +104,11 @@ object MatchPerMonth {
       val station = fields(2)
       (macId, (time, station))
     })
-    val APData = macFile.groupByKey().mapValues(_.toList.sortBy(_._1)).filter(_._2.length > 20)
+    val APData = macFile.groupByKey().mapValues(v => {
+      val data = v.toList.sortBy(_._1)
+      val daySets = data.map(x => dayOfMonth_long(x._1)).toSet
+      (data, daySets)
+    }).filter(x => x._2._1.length > 20)
 
     /*----------------------------------------------------------------------------------------------------------------*/
     // 将AFC数据和AP数据融合
@@ -106,15 +116,26 @@ object MatchPerMonth {
     // 通过广播变量和flatMap结合替代shuffle过程，避免OOM
     val AFCAndAP = APData.flatMap(line => {
       for (v <- broadcastAFCData.value) yield {
-        (v, (line._1, line._2))
+        (v, line)
       }
     })
 
-    val matchProcessing = AFCAndAP.map(line => {
+    // 过滤掉共同出现天数小于AFC天数一半的组合
+    val filterProcess = AFCAndAP.filter(line => {
+      val afcDays = line._1._2._2
+      val apDays = line._2._2._2
+      val inter = afcDays.intersect(apDays).size
+      if (inter / afcDays.size.toFloat > 0.7)
+        true
+      else
+        false
+    })
+
+    val matchProcessing = filterProcess.map(line => {
       val macId = line._2._1
       val ODId = line._1._1
-      val macArray = line._2._2
-      val ODArray = line._1._2
+      val macArray = line._2._2._1
+      val ODArray = line._1._2._1
       var score = 0f
       var index = 0
       while (index + 1 < ODArray.length) {
@@ -171,13 +192,13 @@ object MatchPerMonth {
         index += 1
       }
       // 生成每对AFC记录和AP记录的每月相似度
-      (ODId, (macId, score.formatted("%.3f").toFloat))
-    }).filter(_._2._2 > 10).groupByKey().mapValues(_.toList.sortBy(_._2).reverse.take(2))
+      (ODId, (macId, score.formatted("%.3f").toFloat, ODArray.length / 2))
+    }).filter(_._2._2 > 10).groupByKey().mapValues(_.toList.sortBy(_._2).reverse.take(1))
 
 
     val result = matchProcessing.flatMap(line => {
       for (v <- line._2) yield
-        (line._1, v._1, v._2)
+        (line._1, v._1, v._2, v._3)
     }).repartition(1)
 
     result.saveAsTextFile(args(3))
