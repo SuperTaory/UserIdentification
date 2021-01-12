@@ -100,9 +100,6 @@ object SamplingAPData {
     // 对出行片段采样
     val samplingOnPartitions = samplingByDay.map(line => {
       val sampledData = new ListBuffer[((Long, String, Long), (Long, String, Long))]
-//      for (p <- line._2) {
-//        sampledData.append((p.head, p.last))
-//      }
       for (s <- line._2) {
         val tempData = new ListBuffer[((Long, String, Long), Double)]
         // 设置随机数种子seed

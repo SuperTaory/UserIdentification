@@ -19,8 +19,8 @@ object Model {
       .getOrCreate()
       val sc = spark.sparkContext
 
-    // 读取地铁站点名和编号映射关系
-    val stationFile = sc.textFile(args(0) + "/liutao/AllInfo/stationInfo-UTF-8.txt")
+    // 读取地铁站点名和编号映射关系 "1,机场东,22.647011,113.8226476,1268036000,268"
+    val stationFile = sc.textFile(args(0) + "/zlt/AllInfo/stationInfo-UTF-8.txt")
     val stationNoToNameRDD = stationFile.map(line => {
       val stationNo = line.split(',')(0)
       val stationName = line.split(',')(1)
@@ -29,22 +29,21 @@ object Model {
     val stationNoToName = sc.broadcast(stationNoToNameRDD.collect().toMap)
 
 
-    // 读取所有有效路径的数据
-    val validPathFile = sc.textFile(args(0) + "/liutao/AllInfo/allpath.txt").map(line => {
-      // 仅保留站点编号信息
+    // 读取所有有效路径的数据 "1 2 3 4 5 # 0 V 0.0000 12.6500"
+    // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
+    val validPathFile = sc.textFile(args(0) + "/zlt/AllInfo/allpath.txt").map(line => {
       val fields = line.split(' ').dropRight(5)
       val sou = stationNoToName.value(fields(0).toInt)
       val des = stationNoToName.value(fields(fields.length-1).toInt)
       val pathStations = new ListBuffer[String]
       fields.foreach(x => pathStations.append(stationNoToName.value(x.toInt)))
       ((sou, des), pathStations.toList)
-    }).groupByKey().mapValues(_.toList).cache()
+    }).groupByKey().mapValues(_.toList)
 
-    // 将OD之间的有效路径的站点编号转换为名称，OD-pair作为键
     val validPathMap = sc.broadcast(validPathFile.collect().toMap)
 
-    // 读取站间时间间隔
-    val readODTimeInterval = sc.textFile(args(0) + "/liutao/UI/AllODTimeInterval/ShortPathTime/part-00000").map(line => {
+    // 读取站间时间间隔，单位：秒 "(龙华,清湖,133)"
+    val readODTimeInterval = sc.textFile(args(0) + "/zlt/UI/AllODTimeInterval/ShortPathTime/part-00000").map(line => {
       val p = line.split(',')
       val sou = p(0).drop(1)
       val des = p(1)
@@ -55,7 +54,7 @@ object Model {
 
     // 读取groundTruth计算Accuracy
     // (251449740,ECA9FAE07B4F,26.857,43,0.6245814)
-    val groundTruthData = sc.textFile(args(0) + "/liutao/UI/GroundTruth/IdMap/part-*").map(line => {
+    val groundTruthData = sc.textFile(args(0) + "/zlt/UI/GroundTruth/IdMap/part-*").map(line => {
       val fields = line.split(",")
       val afcId = fields(0).drop(1)
       val apId = fields(1)
@@ -65,9 +64,9 @@ object Model {
 
     // Pre-processing
     // 读取AFC数据: (669404508,2019-06-01 09:21:28,世界之窗,21,2019-06-01 09:31:35,深大,22)
-    // 所有afc数据路径：/Destin/subway-pair/part-*
-    // ground truth数据路径：/liutao/UI/GroundTruth/afcData/part-*
-    val AFCFile = sc.textFile(args(0) + "/Destin/subway-pair/part-*").map(line => {
+    // 所有afc数据路径：/Destination/subway-pair/part-*
+    // ground truth数据路径：/zlt/UI/GroundTruth/afcData/part-*
+    val AFCFile = sc.textFile(args(0) + "/Destination/subway-pair/part-*").map(line => {
       val fields = line.split(',')
       val id = fields(0).drop(1)
       val ot = transTimeToTimestamp(fields(1))
@@ -78,7 +77,7 @@ object Model {
       val d_day = dayOfMonth_long(dt)
       val day = if (o_day == d_day) o_day else 0
       (id, (ot, os, dt, ds, day))
-    })
+    }).filter(_._2._5 > 0)
 
 
     // 划分AFC,仅保留出行天数大于5天的数据
@@ -192,14 +191,14 @@ object Model {
 
 //    val AFCData = sc.broadcast(AFCPatterns.groupByKey().mapValues(_.toList).collect().toMap)
 
-//    AFCPatterns.repartition(10).saveAsTextFile(args(0) + "/liutao/UI/Model/afc")
+//    AFCPatterns.repartition(10).saveAsTextFile(args(0) + "/zlt/UI/Model/afc")
 
 /**
  * *************************分割线********************
  */
 
     // 读取AP数据:(000000000000,2019-06-01 10:38:05,布吉,0,2019-06-01 10:43:50,上水径,15)
-    val APFile = sc.textFile(args(0) + "/liutao/UI/GroundTruth/completedApData/part-*").map(line => {
+    val APFile = sc.textFile(args(0) + "/zlt/UI/GroundTruth/completedApData/part-*").map(line => {
       val fields = line.split(",")
       val id = fields(0).drop(1)
       val ot = transTimeToTimestamp(fields(1))
@@ -213,14 +212,12 @@ object Model {
       val day = if (o_day == d_day) o_day else 0
       // id、（起始时间、起始站点、停留时间、到达时间、目的站点、 停留时间、出行日期）
       (id, (ot, os, o_stay, dt, ds, d_stay, day))
-    })
+    }).filter(_._2._7 > 0)
 
     // 划分AP
     val APPartitions = APFile.groupByKey().map(line => {
       val dataArray = line._2.toList.sortBy(_._1)
-      // 统计出行天数
       val daySets = dataArray.map(_._7).toSet
-      //      dataArray.foreach(x => daySets.add(x._7))
       (line._1, dataArray, daySets)
     }).filter(_._3.size > 5)
 
