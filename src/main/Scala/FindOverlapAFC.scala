@@ -1,6 +1,7 @@
+import GeneralFunctionSets.{dayOfMonth_string, transTimeToTimestamp}
 import org.apache.spark.sql.SparkSession
-import GeneralFunctionSets.{transTimeToTimestamp, dayOfMonth_string}
-import math.{max, abs}
+
+import scala.math.abs
 
 object FindOverlapAFC {
     def main(args: Array[String]): Unit = {
@@ -43,7 +44,7 @@ object FindOverlapAFC {
             val daySets = data.map(_._5).toSet
             val pairs = data.map(x => (x._2, x._4)).toSet
             (id, data, daySets, pairs)
-        }).filter(_._2.length >= min_num-5).cache()
+        }).filter(_._2.length >= min_num - 5).cache()
 
         val partAFC = afcData.filter(x => idSets.contains(x._1))
         val partAFCData = sc.broadcast(partAFC.collect())
@@ -51,7 +52,7 @@ object FindOverlapAFC {
             for (p <- partAFCData.value) yield {
                 (line, p)
             }
-        }).filter(x => x._1._1!= x._2._1 & x._1._3.intersect(x._2._3).nonEmpty & x._1._4.intersect(x._2._4).nonEmpty)
+        }).filter(x => x._1._1 != x._2._1 & x._1._3.intersect(x._2._3).nonEmpty & x._1._4.intersect(x._2._4).nonEmpty)
 
         val overlap = joinRDD.map(line => {
             val p1 = line._1._2
@@ -59,19 +60,19 @@ object FindOverlapAFC {
             var score = 0
             var i = 0
             var j = 0
-            while(i < p1.length & j < p2.length) {
+            while (i < p1.length & j < p2.length) {
                 if (p1(i)._2 == p2(j)._2 & p1(i)._4 == p2(j)._4) {
-                    if (abs(p1(i)._1 - p2(j)._1) < 300 & abs(p1(i)._3 - p2(j)._3) < 300 ) {
+                    if (abs(p1(i)._1 - p2(j)._1) < 300 & abs(p1(i)._3 - p2(j)._3) < 300) {
                         score += 1
                         i += 1
                         j += 1
                     }
-                    else if(p1(i)._1 < p2(j)._1)
+                    else if (p1(i)._1 < p2(j)._1)
                         i += 1
                     else
                         j += 1
                 }
-                else if(p1(i)._1 < p2(j)._1)
+                else if (p1(i)._1 < p2(j)._1)
                     i += 1
                 else
                     j += 1

@@ -1,12 +1,8 @@
-import java.text.SimpleDateFormat
-import java.util.{Calendar, TimeZone}
-
+import GeneralFunctionSets.{dayOfMonth_long, secondsOfDay, transTimeToTimestamp}
 import org.apache.spark.sql.SparkSession
 
 import scala.collection.mutable.ListBuffer
-
-import GeneralFunctionSets.{transTimeToTimestamp, secondsOfDay, dayOfMonth_long}
-import math.abs
+import scala.math.abs
 
 object OverlapCount {
     def main(args: Array[String]): Unit = {
@@ -34,7 +30,7 @@ object OverlapCount {
             // 仅保留站点编号信息
             val fields = line.split(' ').dropRight(5)
             val sou = fields(0).toInt
-            val des = fields(fields.length-1).toInt
+            val des = fields(fields.length - 1).toInt
             val pathStations = new ListBuffer[Int]
             fields.foreach(x => pathStations.append(x.toInt))
             ((sou, des), pathStations.toList)
@@ -75,9 +71,9 @@ object OverlapCount {
         }).filter(_._2 == ot_day).filter(line => {
             val paths = validPathMap.value(line._1)
             var flag_1 = true
-            for(path <- paths if flag_1) {
-                val index_o = path.indexWhere(_==os)
-                val index_d = path.indexWhere(_==ds)
+            for (path <- paths if flag_1) {
+                val index_o = path.indexWhere(_ == os)
+                val index_d = path.indexWhere(_ == ds)
                 if (index_o >= 0 & index_d > index_o)
                     flag_1 = false
             }
@@ -85,10 +81,10 @@ object OverlapCount {
             if (abs(line._3 + ODIntervalMap.value((line._1._1, os)) - ot_min) <= 300)
                 flag_2 = true
             !flag_1 & flag_2
-        }).map(x => ((stationNo2Name.value(x._1._1), stationNo2Name.value(x._1._2)), 1)).reduceByKey(_+_)
+        }).map(x => ((stationNo2Name.value(x._1._1), stationNo2Name.value(x._1._2)), 1)).reduceByKey(_ + _)
 
         afcData.repartition(1).sortBy(_._2, ascending = false).saveAsTextFile(args(0) + "zlt/UI/OverlapCount")
         sc.stop()
-//        print(flow.max, "**********************")
+        //        print(flow.max, "**********************")
     }
 }

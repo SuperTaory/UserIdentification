@@ -1,13 +1,9 @@
-import java.text.SimpleDateFormat
-import java.util.{Calendar, TimeZone}
-
-import GeneralFunctionSets.transTimeToTimestamp
-import GeneralFunctionSets.dayOfMonth_long
+import GeneralFunctionSets.{dayOfMonth_long, transTimeToTimestamp}
 import org.apache.spark.{SparkConf, SparkContext}
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
-import scala.math.{abs, max}
+import scala.math.abs
 
 object MatchPerMonth {
     def main(args: Array[String]): Unit = {
@@ -78,7 +74,7 @@ object MatchPerMonth {
         // 共享为广播变量
         val broadcastAFCData = sc.broadcast(AFCData.collect())
 
-        /*----------------------------------------------------------------------------------------------------------------*/
+        /*-----------------------------------------------------------------------------------------------------------*/
 
         // 读取ap数据
         val macFile = sc.textFile(args(2)).map(line => {
@@ -94,7 +90,7 @@ object MatchPerMonth {
             (line._1, data, daySets)
         }).filter(x => x._3.size > 15)
 
-        /*----------------------------------------------------------------------------------------------------------------*/
+        /*-----------------------------------------------------------------------------------------------------------*/
 
         // 将AFC数据和AP数据融合
         val AFCAndAP = APData.flatMap(ap => {
@@ -108,7 +104,6 @@ object MatchPerMonth {
             val afcDays = line._1._3
             val apDays = line._2._3
             val inter = afcDays.intersect(apDays).size
-//            val dif = apDays.diff(afcDays).size
             if (inter / afcDays.size.toFloat > 0.7)
                 true
             else
@@ -133,7 +128,7 @@ object MatchPerMonth {
                 val l = AP.indexWhere(_._1 > to - 120)
                 val r = AP.lastIndexWhere(_._1 < td + 120)
                 if (l >= 0 && r >= l) {
-                    val macStationSet = AP.slice(l, r+1).map(_._2).toSet
+                    val macStationSet = AP.slice(l, r + 1).map(_._2).toSet
                     if (pathStationSet.union(macStationSet).size == pathStationSet.size) {
                         var temp_score = 0f
                         var index_mac = l
@@ -148,7 +143,7 @@ object MatchPerMonth {
                                         coincideList.append(s)
                                     }
                                 }
-                                // 判断所截取Mac片段中出现的站点是否全部匹配
+                                // 判断所截取AP片段中出现的站点是否全部匹配
                                 if (coincideList.nonEmpty && r == index_mac - 1) {
                                     // 判断所截取并匹配的片段的起始和结束时间是否合理
                                     val realTime1 = abs(to - AP(l)._1)
@@ -163,10 +158,13 @@ object MatchPerMonth {
                                         else if (coincideList.length >= 2)
                                             path_score = (coincideList.last - coincideList.head + 1).toFloat / path.length
                                     }
+                                    temp_score = path_score
+                                    flag = false
+                                    conflict = true
                                 }
+                                else
+                                    conflict = false
                             }
-                            temp_score = path_score
-                            flag = false
                         }
                         score += temp_score
                     }
@@ -175,6 +173,8 @@ object MatchPerMonth {
                 }
                 index += 1
             }
+            if (!conflict)
+                score = 0f
             // 生成每对AFC记录和AP记录的每月相似度
             (afcId, (apId, score.formatted("%.3f").toFloat, AFC.length, score / AFC.length))
         }).filter(_._2._2 > 10).groupByKey().mapValues(_.toList.maxBy(_._2))

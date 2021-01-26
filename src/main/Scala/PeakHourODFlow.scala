@@ -8,8 +8,8 @@ object PeakHourODFlow {
         /**
          * 统计早高峰od之间每 5 min的流量
          */
-//        val l = "2019-06-04 08:42:22"
-//        print(time_flag(l))
+        //        val l = "2019-06-04 08:42:22"
+        //        print(time_flag(l))
         val spark = SparkSession.builder()
             .appName("PeakHourODFlow")
             .getOrCreate()
@@ -26,7 +26,7 @@ object PeakHourODFlow {
 
         val res = afcData.map(line => {
             val flows = Array.ofDim[Int](720)
-            for (i <- 0.until(720)){
+            for (i <- 0.until(720)) {
                 flows(i) = line._2.getOrElse(i, 0)
             }
             val s = flows.sum
@@ -36,7 +36,7 @@ object PeakHourODFlow {
         sc.stop()
     }
 
-    def time_flag(timeString : String) : Int = {
+    def time_flag(timeString: String): Int = {
         val pattern = "yyyy-MM-dd HH:mm:ss"
         val dateFormat = new SimpleDateFormat(pattern)
         dateFormat.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"))
@@ -48,7 +48,7 @@ object PeakHourODFlow {
         val m = calendar.get(Calendar.MINUTE)
         if (h != 7 & h != 8)
             -1
-        else{
+        else {
             m / 5 + (h - 7) * 12 + 24 * (d - 1)
         }
     }

@@ -1,4 +1,3 @@
-import org.apache.spark.sql.SparkSession
 import GeneralFunctionSets.{halfHourOfDay, transTimeToTimestamp}
 import org.apache.spark.{SparkConf, SparkContext}
 
@@ -9,10 +8,10 @@ object TaxiFlow {
         /**
          * 统计深圳市某grid内taxi的流入和流出流量
          */
-//        val spark = SparkSession.builder()
-//            .appName("TaxiFlow")
-//            .getOrCreate()
-//        val sc = spark.sparkContext
+        //        val spark = SparkSession.builder()
+        //            .appName("TaxiFlow")
+        //            .getOrCreate()
+        //        val sc = spark.sparkContext
         val conf = new SparkConf().setAppName("TaxiFlow")
         val sc = new SparkContext(conf)
 
@@ -36,7 +35,7 @@ object TaxiFlow {
         val m = args(1).toInt
         val n = args(2).toInt
 
-        def gridNum(lon : Float, lat : Float) : Int = {
+        def gridNum(lon: Float, lat: Float): Int = {
             val width = (maxLon - minLon) / m
             val height = (maxLat - minLat) / n
             val w = ((lon - minLon) / width).toInt
@@ -52,10 +51,10 @@ object TaxiFlow {
             .mapValues(value => {
                 val data = value.toList.sortBy(_._1)
                 val compressedData = new ListBuffer[(Long, Int, Long, Int)]
-                for (i <- 0.until(data.length-1)) {
+                for (i <- 0.until(data.length - 1)) {
                     // 下一个位置跟前一个位置所在网格不同则记录
-                    if (data(i)._2 != data(i+1)._2 ) {
-                        compressedData.append((data(i)._3, data(i)._2, data(i+1)._3,  data(i+1)._2))
+                    if (data(i)._2 != data(i + 1)._2) {
+                        compressedData.append((data(i)._3, data(i)._2, data(i + 1)._3, data(i + 1)._2))
                     }
                 }
                 compressedData.toList
@@ -72,7 +71,7 @@ object TaxiFlow {
             val period = line._1
             val flow = line._2.toList.groupBy(x => x).map(x => (x._1, x._2.length))
             val res = new ListBuffer[Int]
-            for (i <- 0.until(m*n)) {
+            for (i <- 0.until(m * n)) {
                 if (flow.get(i).isEmpty)
                     res.append(0)
                 else
@@ -90,7 +89,7 @@ object TaxiFlow {
             val period = line._1
             val flow = line._2.toList.groupBy(x => x).map(x => (x._1, x._2.length))
             val res = new ListBuffer[Int]
-            for (i <- 0.until(m*n)) {
+            for (i <- 0.until(m * n)) {
                 if (flow.get(i).isEmpty)
                     res.append(0)
                 else

@@ -1,12 +1,12 @@
-import org.apache.spark.sql.SparkSession
 import GeneralFunctionSets.hourOfDay
+import org.apache.spark.sql.SparkSession
 
 import scala.collection.mutable.ListBuffer
 
 object FlowDistributionOfOverlapSection {
     def main(args: Array[String]): Unit = {
         /**
-         * 统计每个可能存在重叠的片段的流量情况 以出发时间划分每2h一个时段
+         * 根据AFC数据统计每个可能存在重叠的片段的流量情况 以出发时间划分每2h一个时段
          */
         val spark = SparkSession
             .builder()
@@ -30,7 +30,7 @@ object FlowDistributionOfOverlapSection {
             val stations = fields.dropRight(5)
             val info = fields.takeRight(5)
             val sou = stationNoToName.value(stations(0).toInt)
-            val des = stationNoToName.value(stations(stations.length-1).toInt)
+            val des = stationNoToName.value(stations(stations.length - 1).toInt)
             val time = info.last.toFloat
             val pathStations = new ListBuffer[String]
             stations.foreach(x => pathStations.append(stationNoToName.value(x.toInt)))
@@ -50,7 +50,7 @@ object FlowDistributionOfOverlapSection {
             val data = v.toList
             val countOt = Array.ofDim[Int](12)
             for (i <- 0.until(12))
-                countOt(i) = data.count(_==i)
+                countOt(i) = data.count(_ == i)
             countOt
         })
 
@@ -59,10 +59,10 @@ object FlowDistributionOfOverlapSection {
             val path = shortestPathMap.value.getOrElse(line._1, List.empty)
             val otArray = line._2
             val segments = new ListBuffer[(String, String)]
-            if (path.nonEmpty){
+            if (path.nonEmpty) {
                 val len = path.length
-                for (i <- 0.until(len-1)){
-                    for (j <- (i+1).until(len)){
+                for (i <- 0.until(len - 1)) {
+                    for (j <- (i + 1).until(len)) {
                         segments.append((path(i), path(j)))
                     }
                 }
@@ -74,9 +74,9 @@ object FlowDistributionOfOverlapSection {
 
         val res = segmentsFlow.groupByKey().mapValues(v => {
             val data = v.toArray
-            val merge = data.reduce((x,y) => x.zip(y).map(x=>x._1 + x._2))
+            val merge = data.reduce((x, y) => x.zip(y).map(x => x._1 + x._2))
             merge
-        }).map(line=>{
+        }).map(line => {
             line._1._1 + "," + line._1._2 + "," + line._2.mkString(",")
         })
 
