@@ -30,13 +30,13 @@ object FilterGroundTruth {
             .sortBy(_._5, ascending = false)
             .saveAsTextFile(args(0) + "/zlt/UI-2021/GroundTruth/IdMap")
 
-        val SampledAPFile = sc.textFile(args(0) + "/zlt/UI-2021/SampledAPData/part*").map(line => {
+        val SampledAPFile = sc.textFile(args(0) + "/zlt/UI-2021/SampledAPData-15%/part*").map(line => {
             val fields = line.split(",")
             val id = fields(0).drop(1)
             (id, line)
         }).filter(x => APIdSet.value.contains(x._1)).map(_._2)
 
-        SampledAPFile.repartition(1).saveAsTextFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData")
+        SampledAPFile.repartition(1).saveAsTextFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-15%")
 
         val APFile = sc.textFile(args(0) + "/zlt/UI/NormalMacData/part-*").map(line => {
             val fields = line.split(",")

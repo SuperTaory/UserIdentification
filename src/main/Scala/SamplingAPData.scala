@@ -21,7 +21,7 @@ object SamplingAPData {
         val ODIntervalMap = sc.broadcast(readODTimeInterval.collect().toMap)
 
         // (4C49E3376FFF,2019-06-28 19:09:48,留仙洞,1)
-        val macFile = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/APData/part*").map(line => {
+        val macFile = sc.textFile(args(1)).map(line => {
             val fields = line.split(',')
             val macId = fields(0).drop(1)
             val time = transTimeToTimestamp(fields(1))
@@ -85,8 +85,9 @@ object SamplingAPData {
         val sampling = APSegments.map(line => {
             val id = line._1
             val data = line._2
-            val ratio = (0.3 * data.length).toInt
-            val preserve = Random.shuffle(data).take(ratio)
+            val ratio = args(3).toDouble
+            val num = (ratio * data.length).toInt
+            val preserve = Random.shuffle(data).take(num)
             val sampledData = new ListBuffer[((Long, String, Long), (Long, String, Long))]
             for (seg <- preserve) {
                 val time = seg.last._1 - seg.head._1
@@ -168,7 +169,7 @@ object SamplingAPData {
                 (line._1, transTimeToString(v._1._1), v._1._2, v._1._3, transTimeToString(v._2._1), v._2._2, v._2._3)
         }).repartition(5).sortBy(x => (x._1, x._2))
 
-        results.saveAsTextFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-3")
+        results.saveAsTextFile(args(2))
         sc.stop()
     }
 }

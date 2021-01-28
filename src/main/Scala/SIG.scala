@@ -14,22 +14,19 @@ object SIG {
 
         /*-----------------------------------------------------------------------------------------*/
 
-        // 开始处理OD数据集,包括统计每个站点的客流量和提取某个乘客的OD信息
+        // 开始处理OD数据集,统计每个站点的客流量和提取某个乘客的OD信息
         // (669404508,2019-06-01 09:21:28,世界之窗,21,2019-06-01 09:31:35,深大,22)
-        val ODFileRDD = sc.textFile(args(0) + "/liutao/UI/GroundTruth/afcData/part-*").map(line => {
+        val ODFileRDD = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/AFCData/part-*").map(line => {
             val fields = line.split(",")
             val pid = fields(0).drop(1)
             val stations = new ListBuffer[String]
             stations.append(fields(2))
             stations.append(fields(5))
             (pid, stations.toList)
-        }).flatMap(x => for (v <- x._2) yield (x._1, v))
+        }).flatMap(x => for (v <- x._2) yield ((x._1, v), 1))
 
-        //按照站点和用户ID分组，统计一个站点内该ID出现的次数
-        // 生成(station, id, cnt)
-        val OD_cntRDD = ODFileRDD
-            .groupBy(line => (line._1, line._2))
-            .mapValues(_.size)
+        //按照站点和用户ID分组，统计一个站点内该ID出现的次数, 生成(station, id, cnt)
+        val OD_cntRDD = ODFileRDD.reduceByKey(_+_)
             .map(line => (line._1._2, (line._1._1, line._2)))
             .groupByKey()
             .mapValues(_.toList)
@@ -41,39 +38,37 @@ object SIG {
         // 读取站点客流量文件
         // (车公庙,1617160)
         val PassengerFlowOfStation = sc
-            .textFile(args(0) + "/liutao/UI/PassengerFlow/part-00000")
+            .textFile(args(0) + "/zlt/UI/PassengerFlow/part-00000")
             .map(x => (x.split(",").head.drop(1), x.split(",").last.dropRight(1).toInt))
             .cache()
 
-        val MinFlow = PassengerFlowOfStation.collect().last._2.toDouble
+        val MinFlow = PassengerFlowOfStation.collect().minBy(_._2)._2.toDouble
 
         // 对各个站点根据其客流量设置打分参数:rsz
         val RankScoreOfStation = PassengerFlowOfStation.map(line => {
             val score = MinFlow / line._2
             (line._1, score)
         })
+
         // 声明为广播变量用于查询
-        val scoreInfo = sc.broadcast(RankScoreOfStation.collect())
+        val scoreInfo = sc.broadcast(RankScoreOfStation.collect().toMap)
 
         /*-----------------------------------------------------------------------------------------*/
 
         // 读取mac数据
         // (1C48CE5E485B,2019-06-12 11:34:26,高新园,202,2019-06-12 12:08:37,老街,201)
-        val macFile = sc.textFile(args(0) + "/liutao/UI/GroundTruth/apData/part*").map(line => {
+        val macFile = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/APData/part*").map(line => {
             val fields = line.split(',')
             val macId = fields(0).drop(1)
             val stations = new ListBuffer[String]
             stations.append(fields(2))
             stations.append(fields(5))
             (macId, stations.toList)
-        }).flatMap(x => for (v <- x._2) yield (x._1, v))
+        }).flatMap(x => for (v <- x._2) yield ((x._1, v), 1))
 
 
-        // 按照站点和macID分组，统计一个站点内该macID出现的次数
-        val macID_cntRDD = macFile
-            .groupBy(line => (line._1, line._2))
-            .mapValues(_.size)
-            .map(line => (line._1._2, (line._1._1, line._2)))
+        // 按照站点和macID分组，统计一个站点内该macID出现的次数, 生成(station, id, cnt)
+        val macID_cntRDD = macFile.reduceByKey(_+_).map(line => (line._1._2, (line._1._1, line._2)))
 
         //macID_cntRDD.saveAsTextFile(args(3))
 
@@ -89,7 +84,7 @@ object SIG {
         // Increase the ranking score of TB.id by (rsz * o)
         val CandidateSet = mergedStaCnt.map(line => {
             val station = line._2._2
-            val rsz = scoreInfo.value.toMap.get(station).get
+            val rsz = scoreInfo.value(station)
             val score = line._2._3 * rsz
             ((line._1, line._2._1), (line._2._2, line._2._3, score))
         })
