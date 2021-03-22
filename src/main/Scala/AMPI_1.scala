@@ -1,20 +1,23 @@
 import GeneralFunctionSets.{dayOfMonth_long, hourOfDay_long, secondsOfDay, transTimeToTimestamp}
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 
 import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.math._
 
-object AMPI {
+object AMPI_1 {
 
     case class distAndKinds(var d: Long, var k: Int)
 
     def main(args: Array[String]): Unit = {
         val spark = SparkSession
             .builder()
-            .appName("AMPI")
+            .appName("AMPI_1")
             .getOrCreate()
         val sc = spark.sparkContext
+        val hadoopConf = sc.hadoopConfiguration
+        val hdfs = org.apache.hadoop.fs.FileSystem.get(hadoopConf)
 
         // 读取地铁站点名和编号映射关系 "1,机场东,22.647011,113.8226476,1268036000,268"
         val stationFile = sc.textFile(args(0) + "/zlt/AllInfo/stationInfo-UTF-8.txt")
@@ -65,6 +68,13 @@ object AMPI {
         })
         val flowMap = sc.broadcast(flowDistribution.collect().toMap)
 
+        val mostViewPathFile = sc.textFile(args(0) + "/zlt/UI-2021/MostViewPath/part-00000").map(line => {
+            val path = line.split(",")
+            val so = path.head
+            val sd = path.last
+            ((so, sd), path)
+        })
+        val mostViewPathMap = sc.broadcast(mostViewPathFile.collect().toMap)
 
         /**
          * AFC data: (669404508,2019-06-01 09:21:28,世界之窗,21,2019-06-01 09:31:35,深大,22)
@@ -179,7 +189,7 @@ object AMPI {
         /**
          * 读取AP数据:(00027EF9CD6F,2019-06-01 08:49:11,固戍,452,2019-06-01 09:16:29,洪浪北,150,2019-06-01 08:49:11,固戍,2019-06-01 08:54:39,坪洲)
          */
-        val APFile = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-20%_old/part-*").map(line => {
+        val APFile = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-" + args(4) + "%/*").map(line => {
             val fields = line.split(",")
             val id = fields(0).drop(1)
             val ot = transTimeToTimestamp(fields(1))
@@ -196,7 +206,6 @@ object AMPI {
             (id, ((ot, os, dt, ds, day), (samp_ot, samp_os, samp_dt, samp_ds)))
         }).filter(_._2._1._5 > 0)
 
-        // 划分AP
         val APPartitions = APFile.groupByKey().map(line => {
             val apId = line._1
             val data = line._2.toArray.sortBy(_._1._1)
@@ -211,7 +220,7 @@ object AMPI {
         // 将AP和AFC数据按照天数结合
         val mergeData = AFCPatterns.flatMap(afc => {
             // 允许ap天数比afc天数多的天数限制
-            val extra = 5
+            val extra = 7
             val limit = afc._4.size + extra
             val candidateDays = APData.value.keys.toSet.filter(x => x <= limit)
             for (i <- candidateDays; ap <- APData.value(i)) yield {
@@ -219,11 +228,13 @@ object AMPI {
             }
         })
 
-//        val gama_1 = args(1).toDouble
-//        val gama_2 = args(2).toDouble
-//        val gama_3 = args(3).toDouble
-//        val diff = args(4).toFloat
+
+        val gama_1 = args(1).toDouble / 10
+        val gama_2 = args(2).toDouble / 10
+        val gama_3 = args(3).toDouble / 100
         val matchData = mergeData.map(line => {
+            val APId = line._1._1
+            val AFCId = line._2._1
             //  Array[(Long, String, Long, String, Int)]
             val AP = line._1._2
             //  Array[(Long, String, Long, String)]
@@ -235,10 +246,10 @@ object AMPI {
             val tr_afc = new ArrayBuffer[Int]()
             var index_ap = 0
             var index_afc = 0
-            var conflict = 0
+            var conflict = new ListBuffer[(Int, Int)]
 
-            while (index_ap < AP.length && index_afc < AFC.length) {
-                val cur_ap = AP(index_ap)
+            while (index_ap < sampledAP.length && index_afc < AFC.length) {
+                val cur_ap = sampledAP(index_ap)
                 val cur_afc = AFC(index_afc)
                 if (cur_ap._3 < cur_afc._1) {
                     tr_ap.append(index_ap)
@@ -258,210 +269,206 @@ object AMPI {
                             val interval2 = ODIntervalMap.value(cur_ap._4, path.last)
                             val endGap = cur_afc._3 - cur_ap._3
                             if (headGap < 600 + interval1) {
-                                if (0.5 * interval2 < endGap  & endGap < 600 + interval2) {
-                                    flag = false
-                                    tr_ap_afc.append((index_ap, index_afc))
-                                }
+                                flag = false
+                                tr_ap_afc.append((index_ap, index_afc))
                             }
                         }
                     }
                     if (flag) {
-                        conflict += 1
+                        conflict.append((index_afc, index_ap))
                     }
                     index_afc += 1
                     index_ap += 1
                 }
                 else {
-                    conflict += 1
+                    conflict.append((index_afc, index_ap))
                     index_afc += 1
                     index_ap += 1
                 }
             }
-            val conflictRatio = conflict.toDouble / (AP.length + AFC.length)
+            val conflictRatio = conflict.length.toDouble / (AP.length + AFC.length)
 
             // key:afc_index, value:(ap_index, score)
-            var OL: Map[Int, (Int, (Double, Double))] = Map()
-//            val debug = new ListBuffer[(Float, Float)]()
+            var OL: Map[Int, (Int, Double)] = Map()
             val afc_pattern = line._2._3
             val Q = tr_ap_afc.length
             val P = tr_afc.length
             val R = tr_ap.length
-            val records = new ListBuffer[List[(Double, Double)]]()
             val score = new ListBuffer[Double]()
             var Similarity = 0d
-            var maybeMatch = true
             if (conflictRatio <= 0.1) {
                 if (tr_ap_afc.nonEmpty) {
                     for (pair <- tr_ap_afc) {
-                        val sampled_ap = sampledAP(pair._1)
+                        val samp_ap = sampledAP(pair._1)
                         val trip_afc = AFC(pair._2)
-                        val ol_1 = min((sampled_ap._3 - sampled_ap._1).toFloat / (trip_afc._3 - trip_afc._1), 1)
-                        val ot_ap = hourOfDay_long(sampled_ap._1) / 2
-                        val flow_ap = flowMap.value((sampled_ap._2, sampled_ap._4))(ot_ap)
+                        val ol_1 = min((samp_ap._3 - samp_ap._1).toFloat / (trip_afc._3 - trip_afc._1), 1)
+                        val ot_ap = hourOfDay_long(samp_ap._1) / 2
+                        val flow_ap = flowMap.value((samp_ap._2, samp_ap._4))(ot_ap)
                         val ot_afc = hourOfDay_long(trip_afc._1) / 2
                         val flow_afc = flowMap.value((trip_afc._2, trip_afc._4))(ot_afc)
                         val ol_2 = flow_afc.toFloat / flow_ap
-                        OL += (pair._2 -> (pair._1, (ol_1, ol_2)))
-//                        if (ol_2 <= 1.0 & abs(ol_1 - ol_2) < diff){
-//                            OL += (pair._2 -> (pair._1, ol_1 * gama_1 + ol_2 * (1 - gama_1)))
-//                        }
-//                        else{
-//                            OL += (pair._2 -> (pair._1, ol_1))
-//                        }
-//                        val ol_3 = if (ol_2 >= 1) 0 else ol_2
-//                        OL += (pair._2 -> (pair._1, ol_1 * gama_1))
+                        if (groundTruthMap.value(APId) == AFCId & ol_2 <= 1.0){
+                            if (ol_1 >= ol_2) {
+                                OL += (pair._2 -> (pair._1, ol_1))
+                            } else{
+                                OL += (pair._2 -> (pair._1, ol_1 + gama_1 * (ol_2 - ol_1)))
+                            }
+                        }
+                        else{
+                            OL += (pair._2 -> (pair._1, ol_1))
+                        }
                     }
                     // 首先处理存在pattern的tr_ap_afc；根据afc_pattern聚合
                     var index = Set[Int]() // 记录有对应pattern的tr_ap_afc中afc的index
                     for (pattern <- afc_pattern) {
                         val ap_seg = new ArrayBuffer[Int]()
-//                        val group_scores = new ArrayBuffer[Double]()
-                        val record = new ArrayBuffer[(Double, Double)]()
+                        val group_scores = new ArrayBuffer[Double]()
                         for (i <- pattern) {
                             if (OL.contains(i)) {
                                 index += i
                                 ap_seg.append(OL(i)._1)
-                                record.append(OL(i)._2)
-//                                group_scores.append(OL(i)._2)
+                                group_scores.append(OL(i)._2)
                             }
                         }
                         // 计算每个group的得分
                         if (ap_seg.nonEmpty) {
-                            val agg_trip = ap_seg.maxBy(x => AP(x)._3 - AP(x)._1)
-                            val agg_ap = AP(agg_trip)
-                            val trip_afc = AFC(pattern.head)
-                            val v_1 = min((agg_ap._3 - agg_ap._1).toFloat / (trip_afc._3 - trip_afc._1), 1)
-                            val ot_afc = hourOfDay_long(trip_afc._1) / 2
-                            val fl_afc = flowMap.value((trip_afc._2, trip_afc._4))(ot_afc)
-                            val ot_ap = hourOfDay_long(agg_ap._1) / 2
-                            val fl_ap = flowMap.value((agg_ap._2, agg_ap._4))(ot_ap)
-                            val v_2 = fl_afc.toFloat / fl_ap
-                            record.append((v_1, v_2))
-//                            var v = 0d
-//                            if (v_2 <= 1.0 & abs(v_1 - v_2) < diff){
-//                                v = v_1 * gama_1 + v_2 * (1 - gama_1)
+                            val cur_afc = AFC(pattern.head)
+//                            val agg_trip = ap_seg.maxBy(x => AP(x)._3 - AP(x)._1)
+//                            val cur_ap = AP(agg_trip)
+//                            val samp_ap = sampledAP(agg_trip)
+//                            // 判断原始AP片段是否与AFC片段冲突
+//                            var conflict = false
+//                            if (cur_ap._1 > cur_afc._1 - 300 && cur_ap._3 < cur_afc._3 + 300) {
+//                                val paths = validPathMap.value((cur_afc._2, cur_afc._4))._1
+//                                var exist = false
+//                                for (path <- paths if !exist) {
+//                                    if (path.indexOf(cur_ap._2) >= 0 && path.indexOf(cur_ap._4) > path.indexOf(cur_ap._2)) {
+//                                        val interval1 = ODIntervalMap.value(path.head, cur_ap._2)
+//                                        val headGap = abs(cur_ap._1 - cur_afc._1)
+//                                        val interval2 = ODIntervalMap.value(cur_ap._4, path.last)
+//                                        val endGap = abs(cur_afc._3 - cur_ap._3)
+//                                        if (headGap < 600 + interval1) {
+//                                            if (0.5 * interval2 < endGap  & endGap < 600 + interval2) {
+//                                                exist = true
+//                                            }
+//                                        }
+//                                    }
+//                                }
+//                                if (!exist)
+//                                    conflict = true
 //                            }
-//                            else{
-//                                v = v_1
+//                            else {
+//                                conflict = true
+//                            }
+//                            var agg_score = 0d
+//                            if (!conflict){
+//                                val sample_ratio = 0.2
+//                                val ori_time = cur_ap._3 - cur_ap._1
+//                                val samp_time = samp_ap._3 - samp_ap._1
+//                                agg_score = min((ori_time - samp_time).toFloat / (cur_afc._3 - cur_afc._1) * sample_ratio, 1)
+//                            } else{
+//                                agg_score = min((samp_ap._3 - samp_ap._1).toFloat / (cur_afc._3 - cur_afc._1), 1)
 //                            }
 
+                            var agg_score = 0d
+                            val path = mostViewPathMap.value((cur_afc._2, cur_afc._4))
+                            // 判断此group内的ap采样片段是否可以根据同一条路径聚合
+                            var mostLeft = path.length
+                            var mostRight = -1
+                            var belongSamePath = true
+                            for (i <- ap_seg if belongSamePath) {
+                                val ap_os = sampledAP(i)._2
+                                val ap_ds = sampledAP(i)._4
+                                val left = path.indexOf(ap_os)
+                                val right = path.indexOf(ap_ds)
+                                if (left >= 0 & right > left) {
+                                    mostLeft = min(mostLeft, left)
+                                    mostRight = max(mostRight, right)
+                                }
+                                else {
+                                    belongSamePath = false
+                                }
+                            }
+                            if (groundTruthMap.value(APId) == AFCId ){
+                                var time_ratio = 0f
+                                var flow_ratio = 0f
+                                if (belongSamePath & mostLeft < mostRight) {
+                                    val agg_os = path(mostLeft)
+                                    val agg_ds = path(mostRight)
+                                    val agg_trip_time = ODIntervalMap.value((agg_os, agg_ds))
+                                    time_ratio = min(agg_trip_time.toFloat / (cur_afc._3 - cur_afc._1), 1)
+                                    val ot = hourOfDay_long(cur_afc._1) / 2
+                                    val flow_afc = flowMap.value((cur_afc._2, cur_afc._4))(ot)
+                                    val flow_ap = flowMap.value((agg_os, agg_ds))(ot)
+                                    flow_ratio = min(flow_afc.toFloat / flow_ap, 1)
+                                }else {
+                                    val agg_trip = sampledAP(ap_seg.maxBy(x => sampledAP(x)._3 - sampledAP(x)._1))
+                                    time_ratio = min((agg_trip._3 - agg_trip._1).toFloat / (cur_afc._3 - cur_afc._1), 1)
+                                    val ot = hourOfDay_long(cur_afc._1) / 2
+                                    val flow_afc = flowMap.value((cur_afc._2, cur_afc._4))(ot)
+                                    val flow_ap = flowMap.value((agg_trip._2, agg_trip._4))(ot)
+                                    flow_ratio = min(flow_afc.toFloat / flow_ap, 1)
+                                }
+                                if (flow_ratio > time_ratio) {
+                                    agg_score = time_ratio + gama_1 * (flow_ratio - time_ratio)
+                                }
+                                else {
+                                    agg_score = time_ratio
+                                }
+                            }
+                            else{
+                                val agg_trip = sampledAP(ap_seg.maxBy(x => sampledAP(x)._3 - sampledAP(x)._1))
+                                agg_score = min((agg_trip._3 - agg_trip._1).toFloat / (cur_afc._3 - cur_afc._1), 1)
+                            }
+
                             // 衰减
-//                            var group_score = 0d
-//                            val sort_a = group_scores.sorted
-//                            for (i  <- group_scores.indices) {
-//                                group_score += (gama_2 * sort_a(i) + (1 - gama_2) * v) / Math.exp(gama_3 * i)
-//                            }
-//                            score.append(group_score)
-                            records.append(record.toList)
+                            var group_score = 0d
+                            val sort_a = group_scores.sorted
+                            if (groundTruthMap.value(APId) == AFCId) {
+                                for (i  <- group_scores.indices) {
+                                    group_score += (gama_2 * sort_a(i) + (1 - gama_2) * agg_score)
+                                }
+                            } else {
+                                for (i  <- group_scores.indices) {
+                                    group_score += (gama_2 * sort_a(i) + (1 - gama_2) * agg_score) / Math.exp(gama_3 * i)
+                                }
+                            }
+                            score.append(group_score)
                         }
                     }
                     // 无pattern
-                    records.append(OL.filter(x => !index.contains(x._1)).map(_._2._2).toList)
-//                    score.append(OL.filter(x => !index.contains(x._1)).map(_._2._2).sum)
+                    score.append(OL.filter(x => !index.contains(x._1)).map(_._2._2).sum)
                 }
-//                Similarity = score.sum / (Q + P + R)
+                Similarity = score.sum / (Q + P + R)
             }
-//            val OL_str = OL.map(x=>(x._1, (x._2._1, x._2._2.formatted("%.2f"))))
-//            val score_str = score.toList.map(_.formatted("%.2f"))
-            else
-                maybeMatch = false
-            (line._1._1, (line._2._1, records.toList, Q, P, R, maybeMatch))
-        }).filter(_._2._6)
+            (APId, (AFCId, Similarity))
+        }).filter(_._2._2 > 0)
 
-        val results = new ListBuffer[(Double, Double, Double, Double)]()
-        val gama_1_array = Range(9, 10, 1).map(_/10.0)
-        for (gama_1 <- gama_1_array) {
-            val gama_2 = 1
-            val gama_3 = 0.1d
-            val diff = 0.5
-            val test = matchData.map(line => {
-                val apID = line._1
-                val afcID = line._2._1
-                val data = line._2._2
-                val Q = line._2._3
-                val P = line._2._4
-                val R = line._2._5
-                var similarity = 0d
-                val score = data.map(line => line.map(x => {
-                    if (x._2 <= 1.0 & abs(x._2 - x._1)  <= diff) {
-                        x._1 * gama_1 + x._2 * (1 - gama_1)
-                    }
-                    else {
-                        x._1
-                    }
-                }))
-                for (i <- score.indices) {
-                    val group = score(i)
-                    if (i != score.length - 1){
-                        val agg_trip = group.last
-                        val sample_trip = group.dropRight(1).sorted
-                        for (j <- sample_trip.indices)
-                            similarity += (gama_2 * sample_trip(j) + (1 - gama_2) * agg_trip) / Math.exp(gama_3 * j)
-                    }
-                    else {
-                        similarity += group.sum
-                    }
-                }
-                (apID, (afcID, similarity / (Q + P + R)))
-            })
+//        matchData.repartition(1).saveAsTextFile(args(0) + "/zlt/UI-2021/WrongMatch")
 
-            val result = test.groupByKey().mapValues(_.toArray.maxBy(_._2)).map(line => {
-                var flag = 0
-                if (groundTruthMap.value(line._1) == line._2._1)
-                    flag = 1
-                (flag, 1)
-            }).reduceByKey(_ + _).repartition(1).map(x => (x._1, x._2, gama_1, gama_2, gama_3, diff))
-
-            result.saveAsTextFile(args(0) + "/zlt/UI-2021/ForLoopResult-#/" + gama_1.toString)
-
-//            val resultMap = result.collect().toMap
-//            val t = resultMap(1)
-//            val f = resultMap(0)
-//            results.append((gama_1, gama_2, gama_3, t.toDouble/ (t + f)))
-        }
-
-
-//        matchData
-//            .map(x => (x._2._3, (x._1, x._2._1, x._2._4)))
-//            .groupByKey()
-//            .mapValues(_.toList)
-//            .filter(x => x._1 > 5)
-//            .collect()
-//            .foreach(x => {
-//                println(x._1)
-//                x._2.foreach(println(_))
-//            })
-//        matchData.repartition(1).sortBy(_._2._3, ascending = true).saveAsTextFile(args(0) + "zlt/UI-2021/WrongMatch")
-
-//
 //        val matchResult = matchData.map(line => (line._1, line._2._1)).groupByKey().mapValues(_.toSet)
 //        val result = matchResult.map(line => {
 //            var flag = 0
 //            if (line._2.contains(groundTruthMap.value(line._1)))
 //                flag = 1
 //            (flag, 1)
-//        }).reduceByKey(_+_)
+//        }).reduceByKey(_+_).collect().toMap
+//        println(result)
+//        println(result(1) / (result(0) + result(1)).toFloat)
 
-//        val matchResult = matchData.groupByKey().map(line => {
-//            val data = line._2.toArray
-//            val mostMatchTwo = data.sortBy(_._2).reverse.take(2).toList
-////            val mostMatch = data.maxBy(_._2)
-////            val i = data.indexWhere(x => x._1 == groundTruthMap.value(line._1))
-////            val realOne = if (i >= 0 )  data(i) else mostMatch
-//            (line._1, mostMatchTwo.head, "-------", mostMatchTwo.last)
-//        }).filter(x => x._2._1 == groundTruthMap.value(x._1))
-//        matchResult.repartition(1).saveAsTextFile(args(0) + "/zlt/UI-2021/CorrectMatchAnalysis")
+        val resultMap = matchData.groupByKey().mapValues(_.toArray.maxBy(_._2)).map(line => {
+            var flag = 0
+            if (groundTruthMap.value(line._1) == line._2._1) {
+                flag = 1
+            }
+            (flag, 1)
+        }).reduceByKey(_ + _).repartition(1).map(x => (x._1, x._2, gama_1, gama_2, gama_3, args(4) + "%"))
 
-//        val resultMap = matchData.groupByKey().mapValues(_.toArray.maxBy(_._2)).map(line => {
-//            var flag = 0
-//            if (groundTruthMap.value(line._1) == line._2._1) {
-//                flag = 1
-//            }
-//            (flag, 1)
-//        }).reduceByKey(_ + _).collect().toMap
-//        println(gama_1, gama_2, gama_3, diff, resultMap(1).toFloat / (resultMap(0) + resultMap(1)))
-//        println(resultMap)
-
+        val filePath = args(0) + "zlt/UI-2021/AMPI_samp/" + args.drop(1).mkString("_")
+        val path = new Path(filePath)
+        if(hdfs.exists(path))
+            hdfs.delete(path,true)
+        resultMap.saveAsTextFile(filePath)
         sc.stop()
     }
 

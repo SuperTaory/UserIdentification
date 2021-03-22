@@ -1,5 +1,6 @@
 // import org.apache.log4j.{Level, Logger}
 
+import GeneralFunctionSets.transTimeToTimestamp
 import org.apache.spark.sql.SparkSession
 
 import scala.collection.mutable.ListBuffer
@@ -57,12 +58,15 @@ object SIG {
 
         // 读取mac数据
         // (1C48CE5E485B,2019-06-12 11:34:26,高新园,202,2019-06-12 12:08:37,老街,201)
-        val macFile = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/APData/part*").map(line => {
+        // (00027EF9CD6F,2019-06-01 08:49:11,固戍,452,2019-06-01 09:16:29,洪浪北,150,2019-06-01 08:49:11,固戍,2019-06-01 08:58:50,宝安中心)
+        val macFile = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-" + args(1) + "%/*").map(line => {
             val fields = line.split(',')
             val macId = fields(0).drop(1)
+            val samp_os = fields(8)
+            val samp_ds = fields(10).dropRight(1)
             val stations = new ListBuffer[String]
-            stations.append(fields(2))
-            stations.append(fields(5))
+            stations.append(samp_os)
+            stations.append(samp_ds)
             (macId, stations.toList)
         }).flatMap(x => for (v <- x._2) yield ((x._1, v), 1))
 
@@ -96,7 +100,7 @@ object SIG {
         /*-----------------------------------------------------------------------------------------*/
         // 读取站点经纬度信息
         // 1,机场东,22.647011,113.8226476,1268036000,268
-        val stationFile = sc.textFile(args(0) + "/liutao/AllInfo/stationInfo-UTF-8.txt")
+        val stationFile = sc.textFile(args(0) + "/zlt/AllInfo/stationInfo-UTF-8.txt")
         val stationRDD = stationFile.map(line => {
             val fields = line.split(',')
             val stationName = fields(1)
@@ -110,7 +114,7 @@ object SIG {
 
         // 读取groundTruth计算Accuracy
         // (251449740,ECA9FAE07B4F,26.857,43,0.6245814)
-        val groundTruthData = sc.textFile(args(0) + "/liutao/UI/GroundTruth/IdMap/part-*").map(line => {
+        val groundTruthData = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/IdMap/part-*").map(line => {
             val fields = line.split(",")
             val afcId = fields(0).drop(1)
             val apId = fields(1)
@@ -118,10 +122,10 @@ object SIG {
         })
         val groundTruthMap = sc.broadcast(groundTruthData.collect().toMap)
 
-        // 转换为(TA.id, TB.id, list(station, cnt, score)),并过滤出参与计算的候选集合
+        // 转换为(TA.id, TB.id, list(station, cnt, score)),并过滤出参与计算的候选集合
         val groupedRDD = CandidateSet.groupByKey().mapValues(_.toList)
 
-        // 转换为(TA.id, TB.id, SIG)
+        // 转换为(TA.id, TB.id, SIG)
         val transformedRDD = groupedRDD.map(line => {
             val apID = line._1._1
             val afcID = line._1._2
@@ -174,12 +178,8 @@ object SIG {
             if (groundTruthMap.value(line._1).equals(line._2._1))
                 flag = 1
             (flag, 1)
-        }).reduceByKey(_ + _)
-        val resultMap = result.collect().toMap
-        println(resultMap(1).toFloat / (resultMap(0) + resultMap(1)))
-        println(resultMap)
-
-        //    transformedRDD.saveAsTextFile(args(6))
+        }).reduceByKey(_ + _).repartition(1).map(x => (x._1, x._2, args(1).toFloat.formatted("%.0f%%")))
+        result.saveAsTextFile(args(0) + "zlt/UI-2021/SIG/" + args(1) + "%")
 
         sc.stop()
     }
