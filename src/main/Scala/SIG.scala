@@ -171,15 +171,17 @@ object SIG {
                 }
             }
             (apID, (afcID, SIG))
-        }).groupByKey().mapValues(x => x.toList.maxBy(_._2))
+        })
+        val rank = transformedRDD.groupByKey().mapValues(_.toArray.sortBy(_._2).takeRight(20).map(_._1).mkString("-"))
+        rank.repartition(1).saveAsTextFile(args(0) + "zlt/UI-2021/SIG_rank/" + args(1) + "%")
 
-        val result = transformedRDD.map(line => {
-            var flag = 0
-            if (groundTruthMap.value(line._1).equals(line._2._1))
-                flag = 1
-            (flag, 1)
-        }).reduceByKey(_ + _).repartition(1).map(x => (x._1, x._2, args(1).toFloat.formatted("%.0f%%")))
-        result.saveAsTextFile(args(0) + "zlt/UI-2021/SIG/" + args(1) + "%")
+//        val result = transformedRDD.groupByKey().mapValues(x => x.toList.maxBy(_._2)).map(line => {
+//            var flag = 0
+//            if (groundTruthMap.value(line._1).equals(line._2._1))
+//                flag = 1
+//            (flag, 1)
+//        }).reduceByKey(_ + _).repartition(1).map(x => (x._1, x._2, args(1).toFloat.formatted("%.0f%%")))
+//        result.saveAsTextFile(args(0) + "zlt/UI-2021/SIG/" + args(1) + "%")
 
         sc.stop()
     }

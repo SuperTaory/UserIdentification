@@ -151,19 +151,22 @@ object LCS {
             (APId, (AFCId,  count))
         }).filter(_._2._2 > 0)
 
-        val resultMap = matchData.groupByKey().mapValues(_.toArray.maxBy(_._2)).map(line => {
-            var flag = 0
-            if (groundTruthMap.value(line._1) == line._2._1) {
-                flag = 1
-            }
-            (flag, 1)
-        }).reduceByKey(_ + _).repartition(1).map(x => (x._1, x._2, args(1) + "%"))
+        val rank = matchData.groupByKey().mapValues(_.toArray.sortBy(_._2).takeRight(20).map(_._1).mkString("-"))
+        rank.repartition(1).saveAsTextFile(args(0) + "zlt/UI-2021/LCS_rank/" + args(1) + "%")
 
-        val filePath = args(0) + "/zlt/UI-2021/LCS/" + args(1) + "%"
-        val path = new Path(filePath)
-        if(hdfs.exists(path))
-            hdfs.delete(path,true)
-        resultMap.saveAsTextFile(filePath)
+//        val resultMap = matchData.groupByKey().mapValues(_.toArray.maxBy(_._2)).map(line => {
+//            var flag = 0
+//            if (groundTruthMap.value(line._1) == line._2._1) {
+//                flag = 1
+//            }
+//            (flag, 1)
+//        }).reduceByKey(_ + _).repartition(1).map(x => (x._1, x._2, args(1) + "%"))
+//
+//        val filePath = args(0) + "/zlt/UI-2021/LCS/" + args(1) + "%"
+//        val path = new Path(filePath)
+//        if(hdfs.exists(path))
+//            hdfs.delete(path,true)
+//        resultMap.saveAsTextFile(filePath)
         sc.stop()
     }
 }
