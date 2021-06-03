@@ -15,7 +15,7 @@ object SamplingAPData {
             .getOrCreate()
         val sc = spark.sparkContext
 
-        val readODTimeInterval = sc.textFile(args(0) + "/zlt/UI/AllODTimeInterval/ShortPathTime/part-*").map(line => {
+        val readODTimeInterval = sc.textFile(args(0) + "/zlt_hdfs/UI/AllODTimeInterval/ShortPathTime/part-*").map(line => {
             val p = line.split(',')
             val sou = p(0).drop(1)
             val des = p(1)
@@ -24,7 +24,7 @@ object SamplingAPData {
         })
         val ODIntervalMap = sc.broadcast(readODTimeInterval.collect().toMap)
 
-        val mostViewPathFile = sc.textFile(args(0) + "/zlt/UI-2021/MostViewPath/part-00000").map(line => {
+        val mostViewPathFile = sc.textFile(args(0) + "/zlt_hdfs/UI-2021/MostViewPath/part-00000").map(line => {
             val path = line.split(",")
             val so = path.head
             val sd = path.last
@@ -33,7 +33,7 @@ object SamplingAPData {
         val mostViewPathMap = sc.broadcast(mostViewPathFile.collect().toMap)
 
         // (4C49E3376FFF,2019-06-28 19:09:48,留仙洞,1)
-        val macFile = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/APData/part*").map(line => {
+        val macFile = sc.textFile(args(0) + "/zlt_hdfs/UI-2021/GroundTruth/APData/part*").map(line => {
             val fields = line.split(',')
             val macId = fields(0).drop(1)
             val time = transTimeToTimestamp(fields(1))
@@ -128,7 +128,7 @@ object SamplingAPData {
             .sortBy(x => (x._1, x._2._1))
             .map(line => (line._1, line._2.productIterator.mkString(","), line._3.productIterator.mkString(",")))
 
-        val filePath = args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-" + (args(1).toDouble * 10).formatted("%.0f%%")
+        val filePath = args(0) + "/zlt_hdfs/UI-2021/GroundTruth/SampledAPData-" + (args(1).toDouble * 10).formatted("%.0f%%")
         val hadoopConf = sc.hadoopConfiguration
         val hdfs = org.apache.hadoop.fs.FileSystem.get(hadoopConf)
         val path = new Path(filePath)
@@ -185,7 +185,7 @@ object SamplingAPData {
 //        }).repartition(5).filter(x => x._3._2 != x._3._4 & x._2._2 != x._2._5)
 //            .sortBy(x => (x._1, x._2._1))
 //            .map(line => (line._1, line._2.productIterator.mkString(","), line._3.productIterator.mkString(",")))
-//        samplingData.saveAsTextFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-20%_old")
+//        samplingData.saveAsTextFile(args(0) + "/zlt_hdfs/UI-2021/GroundTruth/SampledAPData-20%_old")
 
 //        // 按天进行采样
 //        val samplingByDay = partition.map(line => {
@@ -233,7 +233,7 @@ object SamplingAPData {
 //                (line._1, transTimeToString(v._1._1), v._1._2, v._1._3, transTimeToString(v._2._1), v._2._2, v._2._3)
 //        }).repartition(5).sortBy(x => (x._1, x._2))
 
-//        results.saveAsTextFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-20%")
+//        results.saveAsTextFile(args(0) + "/zlt_hdfs/UI-2021/GroundTruth/SampledAPData-20%")
         sc.stop()
     }
 }

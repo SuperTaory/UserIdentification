@@ -20,7 +20,7 @@ object AMPI_1 {
         val hdfs = org.apache.hadoop.fs.FileSystem.get(hadoopConf)
 
         // 读取地铁站点名和编号映射关系 "1,机场东,22.647011,113.8226476,1268036000,268"
-        val stationFile = sc.textFile(args(0) + "/zlt/AllInfo/stationInfo-UTF-8.txt")
+        val stationFile = sc.textFile(args(0) + "/zlt_hdfs/AllInfo/stationInfo-UTF-8.txt")
         val stationNo2NameRDD = stationFile.map(line => {
             val stationNo = line.split(',')(0)
             val stationName = line.split(',')(1)
@@ -29,7 +29,7 @@ object AMPI_1 {
         val stationNo2Name = sc.broadcast(stationNo2NameRDD.collect().toMap)
 
         // 读取站间时间间隔，单位：秒 "(龙华,清湖,133)"
-        val readODTimeInterval = sc.textFile(args(0) + "/zlt/UI/AllODTimeInterval/ShortPathTime/part-00000").map(line => {
+        val readODTimeInterval = sc.textFile(args(0) + "/zlt_hdfs/UI/AllODTimeInterval/ShortPathTime/part-00000").map(line => {
             val p = line.split(',')
             val sou = p(0).drop(1)
             val des = p(1)
@@ -39,7 +39,7 @@ object AMPI_1 {
         val ODIntervalMap = sc.broadcast(readODTimeInterval.collect().toMap)
 
         // 读取所有有效路径的数据 "1 2 3 4 5 # 0 V 0.0000 12.6500"
-        val validPathFile = sc.textFile(args(0) + "/zlt/AllInfo/allpath.txt").map(line => {
+        val validPathFile = sc.textFile(args(0) + "/zlt_hdfs/AllInfo/allpath.txt").map(line => {
             val fields = line.split(' ').dropRight(5)
             val sou = stationNo2Name.value(fields(0).toInt)
             val des = stationNo2Name.value(fields(fields.length - 1).toInt)
@@ -50,7 +50,7 @@ object AMPI_1 {
         val validPathMap = sc.broadcast(validPathFile.collect().toMap)
 
         // 读取groundTruth计算Accuracy (251449740,ECA9FAE07B4F,26.857,43,0.6245814)
-        val groundTruthData = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/IdMap/part-*").map(line => {
+        val groundTruthData = sc.textFile(args(0) + "/zlt_hdfs/UI-2021/GroundTruth/IdMap/part-*").map(line => {
             val fields = line.split(",")
             val afcId = fields(0).drop(1)
             val apId = fields(1)
@@ -59,7 +59,7 @@ object AMPI_1 {
         val groundTruthMap = sc.broadcast(groundTruthData.collect().toMap)
 
         // 读取flow distribution "蛇口港,黄贝岭,0,0,0,259,193,173,223,350,821,903,338,114"
-        val flowDistribution = sc.textFile(args(0) + "/zlt/UI-2021/SegmentsFlowDistribution/part-00000").map(line => {
+        val flowDistribution = sc.textFile(args(0) + "/zlt_hdfs/UI-2021/SegmentsFlowDistribution/part-00000").map(line => {
             val fields = line.split(",")
             val os = fields(0)
             val ds = fields(1)
@@ -68,7 +68,7 @@ object AMPI_1 {
         })
         val flowMap = sc.broadcast(flowDistribution.collect().toMap)
 
-        val mostViewPathFile = sc.textFile(args(0) + "/zlt/UI-2021/MostViewPath/part-00000").map(line => {
+        val mostViewPathFile = sc.textFile(args(0) + "/zlt_hdfs/UI-2021/MostViewPath/part-00000").map(line => {
             val path = line.split(",")
             val so = path.head
             val sd = path.last
@@ -79,7 +79,7 @@ object AMPI_1 {
         /**
          * AFC data: (669404508,2019-06-01 09:21:28,世界之窗,21,2019-06-01 09:31:35,深大,22)
          */
-        val AFCFile = sc.textFile(args(0) + "/Destination/subway-pair/part-000[0-6]*").map(line => {
+        val AFCFile = sc.textFile(args(0) + "/SZ/subway-pair/part-000[0-6]*").map(line => {
             val fields = line.split(',')
             val id = fields(0).drop(1)
             val ot = transTimeToTimestamp(fields(1))
@@ -189,7 +189,7 @@ object AMPI_1 {
         /**
          * 读取AP数据:(00027EF9CD6F,2019-06-01 08:49:11,固戍,452,2019-06-01 09:16:29,洪浪北,150,2019-06-01 08:49:11,固戍,2019-06-01 08:54:39,坪洲)
          */
-        val APFile = sc.textFile(args(0) + "/zlt/UI-2021/GroundTruth/SampledAPData-" + args(4) + "%/*").map(line => {
+        val APFile = sc.textFile(args(0) + "/zlt_hdfs/UI-2021/GroundTruth/SampledAPData-" + args(4) + "%/*").map(line => {
             val fields = line.split(",")
             val id = fields(0).drop(1)
             val ot = transTimeToTimestamp(fields(1))
@@ -235,11 +235,8 @@ object AMPI_1 {
         val matchData = mergeData.map(line => {
             val APId = line._1._1
             val AFCId = line._2._1
-            //  Array[(Long, String, Long, String, Int)]
             val AP = line._1._2
-            //  Array[(Long, String, Long, String)]
             val sampledAP = line._1._4
-            //  Array[(Long, String, Long, String, Int)]
             val AFC = line._2._2
             val tr_ap_afc = new ArrayBuffer[(Int, Int)]()
             val tr_ap = new ArrayBuffer[Int]()
@@ -444,7 +441,7 @@ object AMPI_1 {
             (APId, (AFCId, Similarity))
         }).filter(_._2._2 > 0)
 
-//        matchData.repartition(1).saveAsTextFile(args(0) + "/zlt/UI-2021/WrongMatch")
+//        matchData.repartition(1).saveAsTextFile(args(0) + "/zlt_hdfs/UI-2021/WrongMatch")
 
 //        val matchResult = matchData.map(line => (line._1, line._2._1)).groupByKey().mapValues(_.toSet)
 //        val result = matchResult.map(line => {
@@ -457,7 +454,7 @@ object AMPI_1 {
 //        println(result(1) / (result(0) + result(1)).toFloat)
 
         val rank = matchData.groupByKey().mapValues(_.toArray.sortBy(_._2).takeRight(20).map(_._1).mkString("-"))
-        rank.repartition(1).saveAsTextFile(args(0) + "zlt/UI-2021/AMPI_rank/" + args(4) + "%")
+        rank.repartition(1).saveAsTextFile(args(0) + "zlt_hdfs/UI-2021/AMPI_rank/" + args(4) + "%")
 
 //        val resultMap = matchData.groupByKey().mapValues(_.toArray.sortBy(_._2).takeRight(args(5).toInt)).map(line => {
 //            var flag = 0
@@ -467,7 +464,7 @@ object AMPI_1 {
 //            (flag, 1)
 //        }).reduceByKey(_ + _).repartition(1).map(x => (x._1, x._2, args(4) + "%", args(5)))
 //
-//        val filePath = args(0) + "zlt/UI-2021/AMPI_rank/" + args.takeRight(2).mkString("_")
+//        val filePath = args(0) + "zlt_hdfs/UI-2021/AMPI_rank/" + args.takeRight(2).mkString("_")
 //        val path = new Path(filePath)
 //        if(hdfs.exists(path))
 //            hdfs.delete(path,true)

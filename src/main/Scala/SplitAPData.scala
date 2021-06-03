@@ -15,7 +15,7 @@ object SplitAPData {
         val sc = spark.sparkContext
 
         // args(0)设置：hdfs://compute-5-2:8020/user/zhaojuanjuan/
-        val readODTimeInterval = sc.textFile(args(0) + "/zlt/UI/AllODTimeInterval/ShortPathTime/part-*").map(line => {
+        val readODTimeInterval = sc.textFile(args(0) + "/zlt_hdfs/UI/AllODTimeInterval/ShortPathTime/part-*").map(line => {
             val p = line.split(',')
             val sou = p(0).drop(1)
             val des = p(1)
@@ -25,7 +25,7 @@ object SplitAPData {
         val ODIntervalMap = sc.broadcast(readODTimeInterval.collect().toMap)
 
         // 读取地铁站点名和编号映射关系 "1,机场东,22.647011,113.8226476,1268036000,268"
-        val stationFile = sc.textFile(args(0) + "/zlt/AllInfo/stationInfo-UTF-8.txt")
+        val stationFile = sc.textFile(args(0) + "/zlt_hdfs/AllInfo/stationInfo-UTF-8.txt")
         val stationNo2NameRDD = stationFile.map(line => {
             val stationNo = line.split(',')(0)
             val stationName = line.split(',')(1)
@@ -34,7 +34,7 @@ object SplitAPData {
         val stationNo2Name = sc.broadcast(stationNo2NameRDD.collect().toMap)
 
         // 读取所有有效路径的数据 "1 2 3 4 5 # 0 V 0.0000 12.6500"
-        val validPathFile = sc.textFile(args(0) + "/zlt/AllInfo/allpath.txt").map(line => {
+        val validPathFile = sc.textFile(args(0) + "/zlt_hdfs/AllInfo/allpath.txt").map(line => {
             val fields = line.split(' ').dropRight(5)
             val sou = stationNo2Name.value(fields(0).toInt)
             val des = stationNo2Name.value(fields(fields.length - 1).toInt)
@@ -44,7 +44,7 @@ object SplitAPData {
         val validPathMap = sc.broadcast(validPathFile.collect().toMap)
 
         // AP数据格式：(4C49E3376FFF,2019-06-28 19:09:48,留仙洞,1)
-        // AP数据路径：/zlt/UI/NormalMacData/
+        // AP数据路径：/zlt_hdfs/UI/NormalMacData/
         val macFile = sc.textFile(args(0) + args(1)).map(line => {
             val fields = line.split(',')
             val macId = fields(0).drop(1)
@@ -53,7 +53,7 @@ object SplitAPData {
             // 停留时间
             val dur = fields(3).dropRight(1).toLong
             (macId, (time, station, dur))
-        }).filter(x => x._2._3 < 900 & hourOfDay_long(x._2._1) >= 6  & x._1 != "000000000000")
+        }).filter(x => hourOfDay_long(x._2._1) >= 6  & x._1 != "000000000000")
             .groupByKey()
             .mapValues(_.toArray.sortBy(_._1))
             .filter(_._2.length > 5)
@@ -63,21 +63,25 @@ object SplitAPData {
             // 设置出行片段长度阈值
             val m = 1
             val MacId = line._1
+            // 未划分序列
             val data = line._2
+            // 存储单个出行片段
             val segment = new ListBuffer[(Long, String, Long)]
+            // 存储所有出行片段
             val segments = new ListBuffer[List[(Long, String, Long)]]
             for (s <- data) {
                 if (segment.isEmpty) {
                     segment.append(s)
                 }
                 else {
+                    // 当前轨迹点与前一个轨迹点相同则视为一次新的出行片段起始点
                     if (s._2 == segment.last._2) {
                         if (segment.length > m) {
                             segments.append(segment.toList)
                         }
                         segment.clear()
                     }
-                    else {
+                    else { // 否则，根据轨迹点之间的时间差判断是否分割
                         // 根据OD时间长度设置额外容忍时间误差
                         var extra = 0
                         val odInterval = ODIntervalMap.value((segment.last._2, s._2))

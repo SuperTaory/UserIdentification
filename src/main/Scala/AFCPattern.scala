@@ -1,4 +1,4 @@
-import GeneralFunctionSets.{dayOfMonth_long, secondsOfDay, transTimeToTimestamp}
+import GeneralFunctionSets.{dayOfMonth_long, secondsOfDay, transTimeToTimestamp, transTimeToString}
 import org.apache.spark.sql.SparkSession
 
 import scala.collection.mutable
@@ -9,6 +9,9 @@ object AFCPattern {
 
     case class distAndKinds(var d: Long, var k: Int)
     def main(args: Array[String]): Unit = {
+        /**
+         * 根据AFC数据集提取每位乘客的出行模式
+         */
 
         val spark = SparkSession
             .builder()
@@ -18,7 +21,7 @@ object AFCPattern {
 
         /**
          * AFC data: (669404508,2019-06-01 09:21:28,世界之窗,21,2019-06-01 09:31:35,深大,22)
-         * AFC data path: /Destination/subway-pair/
+         * AFC data path: /SZ/subway-pair/
          */
         val AFCFile = sc.textFile(args(0) + args(1)).map(line => {
             val fields = line.split(',')
@@ -123,11 +126,14 @@ object AFCPattern {
                 })
             }
 
+            // 将pairs中的出行时间转换为string格式
+            val transTimeFormat = pairs.map(x => (transTimeToString(x._1), x._2, transTimeToString(x._3), x._4, x._5))
+
             // id、出行集合、出行模式集合(每种出行模式的出行编号集合)、出行日期集合
-            (line._1, pairs.toList, afc_patterns.toList, daySets)
+            (line._1, transTimeFormat.toList, afc_patterns.toList, daySets)
         })
 
-        AFCPatterns.saveAsTextFile(args(0) + args(2))
+        AFCPatterns.repartition(1).saveAsTextFile(args(0) + args(2))
 
         sc.stop()
     }
