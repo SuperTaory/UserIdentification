@@ -330,43 +330,6 @@ object AMPI_1 {
                         // 计算每个group的得分
                         if (ap_seg.nonEmpty) {
                             val cur_afc = AFC(pattern.head)
-//                            val agg_trip = ap_seg.maxBy(x => AP(x)._3 - AP(x)._1)
-//                            val cur_ap = AP(agg_trip)
-//                            val samp_ap = sampledAP(agg_trip)
-//                            // 判断原始AP片段是否与AFC片段冲突
-//                            var conflict = false
-//                            if (cur_ap._1 > cur_afc._1 - 300 && cur_ap._3 < cur_afc._3 + 300) {
-//                                val paths = validPathMap.value((cur_afc._2, cur_afc._4))._1
-//                                var exist = false
-//                                for (path <- paths if !exist) {
-//                                    if (path.indexOf(cur_ap._2) >= 0 && path.indexOf(cur_ap._4) > path.indexOf(cur_ap._2)) {
-//                                        val interval1 = ODIntervalMap.value(path.head, cur_ap._2)
-//                                        val headGap = abs(cur_ap._1 - cur_afc._1)
-//                                        val interval2 = ODIntervalMap.value(cur_ap._4, path.last)
-//                                        val endGap = abs(cur_afc._3 - cur_ap._3)
-//                                        if (headGap < 600 + interval1) {
-//                                            if (0.5 * interval2 < endGap  & endGap < 600 + interval2) {
-//                                                exist = true
-//                                            }
-//                                        }
-//                                    }
-//                                }
-//                                if (!exist)
-//                                    conflict = true
-//                            }
-//                            else {
-//                                conflict = true
-//                            }
-//                            var agg_score = 0d
-//                            if (!conflict){
-//                                val sample_ratio = 0.2
-//                                val ori_time = cur_ap._3 - cur_ap._1
-//                                val samp_time = samp_ap._3 - samp_ap._1
-//                                agg_score = min((ori_time - samp_time).toFloat / (cur_afc._3 - cur_afc._1) * sample_ratio, 1)
-//                            } else{
-//                                agg_score = min((samp_ap._3 - samp_ap._1).toFloat / (cur_afc._3 - cur_afc._1), 1)
-//                            }
-
                             var agg_score = 0d
                             val path = mostViewPathMap.value((cur_afc._2, cur_afc._4))
                             // 判断此group内的ap采样片段是否可以根据同一条路径聚合
@@ -453,7 +416,7 @@ object AMPI_1 {
 //        println(result)
 //        println(result(1) / (result(0) + result(1)).toFloat)
 
-        val rank = matchData.groupByKey().mapValues(_.toArray.sortBy(_._2).takeRight(20).map(_._1).mkString("-"))
+        val rank = matchData.groupByKey().mapValues(_.toArray.sortBy(_._2).takeRight(args(5).toInt).map(_._1).mkString("-"))
         rank.repartition(1).saveAsTextFile(args(0) + "zlt_hdfs/UI-2021/AMPI_rank/" + args(4) + "%")
 
 //        val resultMap = matchData.groupByKey().mapValues(_.toArray.sortBy(_._2).takeRight(args(5).toInt)).map(line => {
